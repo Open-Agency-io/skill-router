@@ -1,0 +1,29 @@
+{
+  "name": "@openagency/skill-router",
+  "version": "0.1.0",
+  "description": "Low-token, harness-portable routing for agent skills",
+  "type": "module",
+  "bin": {
+    "skill-router": "./src/cli.js"
+  },
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check src/*.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "src",
+    "skills",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "agent-skills",
+    "opencode",
+    "skill-router",
+    "llm"
+  ],
+  "license": "MIT"
+}
