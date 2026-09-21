@@ -19,14 +19,22 @@ export const DEFAULT_CONFIG = Object.freeze({
   stateDirectory: ".skill-router",
 });
 
+function safeMap(value = {}) {
+  const result = Object.create(null);
+  for (const [key, item] of Object.entries(value)) {
+    Object.defineProperty(result, key, { value: item, enumerable: true, writable: true, configurable: true });
+  }
+  return result;
+}
+
 function cloneDefaults() {
   return {
     ...DEFAULT_CONFIG,
     sources: [...DEFAULT_CONFIG.sources],
     include: [...DEFAULT_CONFIG.include],
     exclude: [...DEFAULT_CONFIG.exclude],
-    aliases: {},
-    skills: {},
+    aliases: safeMap(),
+    skills: safeMap(),
     routing: { ...DEFAULT_CONFIG.routing },
   };
 }
@@ -40,8 +48,8 @@ export function normalizeConfig(value = {}) {
     ...cloneDefaults(),
     ...value,
     routing: { ...DEFAULT_CONFIG.routing, ...(value.routing ?? {}) },
-    aliases: { ...(value.aliases ?? {}) },
-    skills: { ...(value.skills ?? {}) },
+    aliases: safeMap(value.aliases),
+    skills: safeMap(value.skills),
   };
 
   validateConfig(config);
@@ -63,8 +71,21 @@ export function validateConfig(config) {
   if (Object.entries(config.aliases).some(([key, value]) => !key || typeof value !== "string")) {
     throw new Error("aliases must map non-empty phrases to skill IDs");
   }
-  if (typeof config.stateDirectory !== "string" || !config.stateDirectory.trim()) {
-    throw new Error("stateDirectory must be a non-empty string");
+  for (const [id, settings] of Object.entries(config.skills)) {
+    if (!id || !settings || typeof settings !== "object" || Array.isArray(settings)) {
+      throw new Error("skills must map skill IDs to settings objects");
+    }
+    if (settings.enabled !== undefined && typeof settings.enabled !== "boolean") {
+      throw new Error(`skills.${id}.enabled must be a boolean`);
+    }
+    for (const key of ["description", "source"]) {
+      if (settings[key] !== undefined && typeof settings[key] !== "string") {
+        throw new Error(`skills.${id}.${key} must be a string`);
+      }
+    }
+  }
+  if (config.stateDirectory !== ".skill-router") {
+    throw new Error('stateDirectory must be the router-owned path ".skill-router"');
   }
 
   const { minimumScore, minimumMargin, maxCandidates, allowSequences } = config.routing;

@@ -31,8 +31,10 @@ async function walkSkillFiles(root) {
   return files;
 }
 
-function deriveID(relative) {
-  return relative === "SKILL.md"
+function deriveID(relative, directFile = false, absolute = relative) {
+  return directFile && path.basename(relative) === "SKILL.md"
+    ? path.basename(path.dirname(absolute))
+    : relative === "SKILL.md"
     ? "SKILL"
     : path.basename(relative) === "SKILL.md"
     ? path.basename(path.dirname(relative))
@@ -64,7 +66,7 @@ export async function discoverSource(source, sourceIndex = 0) {
     }
     throw error;
   }
-  if (!stat.isDirectory()) {
+  if (!stat.isDirectory() && !(stat.isFile() && root.endsWith(".md"))) {
     fingerprintEntries.push({ kind: "source", source: root, sourceIndex, status: "not-directory" });
     return {
       root,
@@ -74,11 +76,21 @@ export async function discoverSource(source, sourceIndex = 0) {
     };
   }
 
-  fingerprintEntries.push({ kind: "source", source: root, sourceIndex, status: "directory" });
+  const directFile = stat.isFile();
+  fingerprintEntries.push({
+    kind: "source",
+    source: root,
+    sourceIndex,
+    status: directFile ? "file" : "directory",
+  });
 
-  for (const file of await walkSkillFiles(root)) {
-    const id = deriveID(file.relative);
-    if (id === "SKILL" && file.relative === "SKILL.md") {
+  const candidates = directFile
+    ? [{ absolute: root, relative: path.basename(root) }]
+    : await walkSkillFiles(root);
+
+  for (const file of candidates) {
+    const id = deriveID(file.relative, directFile, file.absolute);
+    if (id === "SKILL" && file.relative === "SKILL.md" && !directFile) {
       diagnostics.push(
         diagnostic("warning", "root-skill-id", "A source-root SKILL.md has the literal ID SKILL", {
           path: file.absolute,

@@ -20,4 +20,5 @@ test("rejects unsafe configuration shapes", () => {
   assert.throws(() => normalizeConfig({ sources: "skills" }), /sources/);
   assert.throws(() => normalizeConfig({ routing: { minimumMargin: 2 } }), /minimumMargin/);
   assert.throws(() => normalizeConfig({ aliases: { release: false } }), /aliases/);
+  assert.throws(() => normalizeConfig({ stateDirectory: "." }), /router-owned/);
 });
