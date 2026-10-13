@@ -1225,7 +1225,7 @@ test("B1: an anchor replaced around its validation is preserved, never dropped",
           // The replacement lands between the validation read and the
           // post-validation attribution: the attributed identity can no
           // longer match, so the anchor is preserved untouched.
-          await rm(anchor, { force: true });
+          await rename(anchor, `${anchor}.pinned`);
           await writeFile(anchor, "foreign-anchor\n", { mode: 0o600 });
         }
       }
