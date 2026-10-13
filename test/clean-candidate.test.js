@@ -948,7 +948,24 @@ test("the core gate environment carries no credentials, config channels, or host
     assert.ok(!String(env.TMPDIR).startsWith(ambientTemp), "the ambient TMPDIR is never inherited");
 
     const serialized = JSON.stringify(env);
-    for (const secret of ["SENTINEL_", "AKIA-", "/host/", "/runner/", "registry.invalid", "/host/project"]) {
+    // The broad `/runner/` substring is deliberately NOT a sentinel here:
+    // PATH is intentionally preserved (asserted above), and on a hosted
+    // runner it legitimately contains `/home/runner/...` (npm prepends the
+    // workspace's `node_modules/.bin`). The exact injected runner-channel
+    // values below still fail on any leak of those channels, under any key.
+    for (const secret of [
+      "SENTINEL_",
+      "AKIA-",
+      "/host/",
+      "/runner/env",
+      "/runner/path",
+      "/runner/output",
+      "/runner/state",
+      "/runner/temp",
+      "/runner/tool-cache",
+      "registry.invalid",
+      "/host/project",
+    ]) {
       assert.ok(!serialized.includes(secret), `no credential or host-config value may survive: ${secret}`);
     }
     assert.ok(!existsSync(ambientTemp), "the ambient temp path inside the source is never created");

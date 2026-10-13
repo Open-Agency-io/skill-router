@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
@@ -1262,8 +1262,13 @@ test("B1: an anchor replaced before the attributed durableUnlink survives and is
         // The replacement lands after the attribution observation and before
         // the attributed durableUnlink: its first observation no longer
         // matches the attributed identity, so nothing is renamed, claimed, or
-        // unlinked and the replacement survives.
-        await rm(anchor, { force: true });
+        // unlinked and the replacement survives. The original is renamed aside
+        // rather than deleted: an inode allocator with eager reuse (ext4 on
+        // the Linux runner) can give the replacement the same dev/ino the
+        // deleted file just freed, which would make the swap invisible to the
+        // identity check. Renaming keeps the old inode allocated, so the
+        // replacement always differs on every platform.
+        await rename(anchor, `${anchor}.pinned`);
         await writeFile(anchor, "foreign-anchor\n", { mode: 0o600 });
       }
       return stat;
