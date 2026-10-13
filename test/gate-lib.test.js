@@ -90,7 +90,7 @@ test("exact tag-to-version matching only", () => {
 });
 
 test("tarball filename identity is derived only from a safe name and exact version", () => {
-  assert.equal(expectedTarballFilename("@openagency/skill-router", "0.1.0"), "openagency-skill-router-0.1.0.tgz");
+  assert.equal(expectedTarballFilename("@openagency.io/skill-router", "0.1.0"), "openagency.io-skill-router-0.1.0.tgz");
   assert.equal(expectedTarballFilename("plain", "1.2.3"), "plain-1.2.3.tgz");
   assert.equal(expectedTarballFilename("@scope/pkg", "1.0.0-rc.1"), "scope-pkg-1.0.0-rc.1.tgz");
   assert.throws(() => expectedTarballFilename("@scope/pkg", "../1.0.0"), /refusing to derive a tarball name/);
@@ -103,15 +103,15 @@ test("tarball filename identity is derived only from a safe name and exact versi
 
 test("pack output must match exact name, version, filename, and required files", () => {
   const entry = {
-    name: "@openagency/skill-router",
+    name: "@openagency.io/skill-router",
     version: "0.1.0",
-    filename: "openagency-skill-router-0.1.0.tgz",
+    filename: "openagency.io-skill-router-0.1.0.tgz",
     size: 192930,
     files: [{ path: "LICENSE" }, { path: "README.md" }, { path: "package.json" }, { path: "src/cli.js" }],
   };
-  const options = { name: "@openagency/skill-router", version: "0.1.0", requiredFiles: ["package.json", "src/cli.js"] };
+  const options = { name: "@openagency.io/skill-router", version: "0.1.0", requiredFiles: ["package.json", "src/cli.js"] };
   const parsed = parsePackResult(JSON.stringify([entry]), options);
-  assert.equal(parsed.filename, "openagency-skill-router-0.1.0.tgz");
+  assert.equal(parsed.filename, "openagency.io-skill-router-0.1.0.tgz");
   assert.equal(parsed.size, 192930);
   assert.deepEqual(parsed.files, ["LICENSE", "README.md", "package.json", "src/cli.js"]);
 

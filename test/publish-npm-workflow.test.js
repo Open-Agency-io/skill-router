@@ -57,11 +57,11 @@ const ALLOWED_EXPRESSION =
   /^(?:github\.token|github\.event\.inputs\.release_tag|steps\.verify\.outputs\.[a-z][a-z0-9_]*)$/;
 
 const NPM_VERSION = "11.20.0";
-const PACKAGE_NAME = "@openagency/skill-router";
+const PACKAGE_NAME = "@openagency.io/skill-router";
 const ORGANISATION_REPO = "Open-Agency-io/skill-router";
 const RELEASE_TAG = "v0.1.0";
 const PACKAGE_VERSION = "0.1.0";
-const TARBALL_NAME = "openagency-skill-router-0.1.0.tgz";
+const TARBALL_NAME = "openagency.io-skill-router-0.1.0.tgz";
 const REPOSITORY_URL = "git+https://github.com/Open-Agency-io/skill-router.git";
 const HOMEPAGE_URL = "https://github.com/Open-Agency-io/skill-router#readme";
 const BUGS_URL = "https://github.com/Open-Agency-io/skill-router/issues";
@@ -658,7 +658,7 @@ test("the verify step proves the remote contract before downloading, then inspec
   assert.match(verify, /--pattern '\*\.tgz'/, "only tarballs are downloaded");
   assert.match(verify, /--pattern 'SHA256SUMS'/, "the checksum file is downloaded");
   assert.match(verify, /shopt -s nullglob dotglob/, "hidden entries are counted too");
-  assert.match(verify, /package_name='@openagency\/skill-router'/, "the provisional package name is pinned");
+  assert.match(verify, /package_name='@openagency\.io\/skill-router'/, "the verified package name is pinned");
   assert.ok(!/sha256sum|shasum|openssl|\btar\s+-/.test(verify), "no external checksum or archive utility is invoked");
   const shellOnly = verify.replace(new RegExp(`<<'${VERIFY_MARKER}'[\\s\\S]*?\\n${VERIFY_MARKER}`), "<verifier>");
   assert.ok(
@@ -690,7 +690,7 @@ test("the stage step revalidates with the same verifier immediately before stagi
 });
 
 test("package metadata is exact, and no lifecycle script can run at publication", () => {
-  assert.equal(packageJson.name, PACKAGE_NAME, "the provisional scoped name is unchanged");
+  assert.equal(packageJson.name, PACKAGE_NAME, "the scoped package name is exactly the verified organization name");
   assert.equal(packageJson.license, "MIT");
   assert.deepEqual(packageJson.repository, { type: "git", url: REPOSITORY_URL }, "full repository object with the exact URL");
   assert.equal(packageJson.homepage, HOMEPAGE_URL);
@@ -799,7 +799,7 @@ test("the verifier accepts a real npm pack tarball", (t) => {
   const result = runVerifier("verify", bundle);
   accepted(result);
   assert.match(result.stdout, /verify ok/);
-  assert.match(result.stdout, new RegExp(`package ${PACKAGE_NAME.replace("/", "\\/")}@${PACKAGE_VERSION}`));
+  assert.match(result.stdout, new RegExp(`package ${PACKAGE_NAME.replace(/[/.]/g, "\\$&")}@${PACKAGE_VERSION}`));
   assert.ok(Number(/\| members (\d+)/.exec(result.stdout)[1]) >= 2, "the real archive carries its members");
 });
 
@@ -1222,7 +1222,8 @@ test("both files are proven by lstat/open identity, and drift fails the pre-stag
   // Metadata refusals still hold through the full pipeline.
   const metadataCases = [
     ["wrong version", { version: "0.2.0" }, /does not match the release tag/],
-    ["wrong package name", { name: "@openagency/other" }, /package name mismatch/],
+    ["wrong package name", { name: "@openagency.io/other" }, /package name mismatch/],
+    ["stale provisional package name", { name: "@openagency/skill-router" }, /package name mismatch/],
   ];
   for (const [label, options, pattern] of metadataCases) {
     refused(runVerifier("verify", bundleFixture({ entries: [MANIFEST_ENTRY] }), options), pattern);
@@ -1423,7 +1424,7 @@ test("the release contract is proven before download and gates npm (stubbed gh)"
       "an asset is renamed",
       {
         contractText: contract({
-          assets: [{ ...honest[0], name: "openagency-skill-router-9.9.9.tgz" }, honest[1]],
+          assets: [{ ...honest[0], name: "openagency.io-skill-router-9.9.9.tgz" }, honest[1]],
         }),
       },
       ["gh api"],
@@ -1520,13 +1521,19 @@ test("the README documents the deferred bootstrap and never suggests the taken u
   assert.ok(readme.includes(REPOSITORY_URL.replace("git+", "")), "the repository link is documented");
   assert.ok(readme.includes(HOMEPAGE_URL), "the homepage link is documented");
   assert.ok(readme.includes("not published"), "the package is documented as unpublished");
-  assert.ok(/unconfirmed/i.test(readme), "scope rights are documented as unconfirmed");
-  assert.ok(readme.includes("Stop unless the scope rights are confirmed"), "the bootstrap stops until scope rights are confirmed");
+  assert.ok(!readme.includes("@openagency/skill-router"), "the retired provisional scope is gone from the README");
+  assert.ok(!/unconfirmed/i.test(readme), "the obsolete unconfirmed-scope blocker is gone");
+  assert.ok(
+    /ownership was\s+verified/i.test(readme) || /ownership is verified/i.test(readme),
+    "organization ownership is documented as verified",
+  );
+  assert.ok(!readme.includes("Stop unless the scope rights are confirmed"), "the scope-rights stop gate is gone");
   assert.ok(readme.includes("--ignore-scripts"), "the manual bootstrap disables scripts");
   assert.ok(
-    readme.includes(`npm publish ./release-assets/${TARBALL_NAME}`),
-    "the bootstrap publishes the exact tarball file",
+    readme.includes(`npm stage publish ./release-assets/${TARBALL_NAME}`),
+    "the bootstrap stages the exact tarball file",
   );
+  assert.ok(readme.includes("0.0.0-stage"), "the staged bootstrap placeholder is documented");
   assert.ok(readme.includes("do not run now"), "the bootstrap carries an explicit do-not-run warning");
   assert.ok(readme.includes("mkdir fresh-bootstrap"), "the bootstrap uses a fresh directory of its own");
   assert.ok(readme.includes("ls -A release-assets"), "the bootstrap checks for exactly two assets");
@@ -1539,6 +1546,9 @@ test("the README documents the deferred bootstrap and never suggests the taken u
   assert.ok(readme.includes("automatic provenance"), "later staged versions get automatic provenance");
   assert.ok(readme.includes("publish-npm.yml"), "the trusted publisher workflow filename is documented");
   assert.ok(readme.includes("stage-only"), "the trusted publisher permission is documented");
+  assert.ok(readme.includes("within two days"), "the trusted-publisher activation window is documented");
+  assert.ok(readme.includes("restrict any traditional npm tokens"), "token restriction after activation is documented");
+  assert.ok(/has\s+\*\*not been configured yet\*\*/.test(readme), "the trusted publisher is not claimed to be configured");
   assert.ok(readme.includes("NPM_CONFIG_USERCONFIG"), "the setup-node npmrc placeholder is documented");
   assert.ok(readme.includes("placeholder"), "the placeholder is described as a placeholder, not a token");
   assert.ok(!/no `NODE_AUTH_TOKEN`, no\s+`NPM_TOKEN`, no\s+`\.npmrc` written/.test(readme), "the old npmrc claim is gone");
@@ -1550,7 +1560,7 @@ test("the README documents the deferred bootstrap and never suggests the taken u
   assert.ok(!/npm\s+(?:i|install|add)\s+(?:-g|--global\s+)?skill-router\b/.test(readme), "the taken unscoped name is never installable");
   assert.match(
     readme,
-    /not on npm yet[\s\S]{0,400}npm install --global @openagency\/skill-router/,
+    /not on npm yet[\s\S]{0,400}npm install --global @openagency\.io\/skill-router/,
     "the install command carries the unpublished caveat",
   );
 });

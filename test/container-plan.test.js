@@ -307,7 +307,7 @@ test("matrix plan packs once and creates exactly one fresh docker run per case",
 
 test("case runs are isolated, immutable-ready, and never mount repository/HOME/config", () => {
   const entry = expandMatrix(manifest).find((item) => item.id === "opencode-v1-select");
-  const artifact = "/tmp/skill-router-pack-abc/openagency-skill-router-0.1.0.tgz";
+  const artifact = "/tmp/skill-router-pack-abc/openagency.io-skill-router-0.1.0.tgz";
   const run = planCaseRun({
     manifest,
     case: entry,
@@ -374,7 +374,7 @@ test("artifact path guards reject repository and HOME sources", () => {
       planCaseRun({
         manifest,
         case: entry,
-        artifactPath: path.join(repoRoot, "openagency-skill-router-0.1.0.tgz"),
+        artifactPath: path.join(repoRoot, "openagency.io-skill-router-0.1.0.tgz"),
         runId: newRunId(),
         repoRoot,
         home: process.env.HOME,
@@ -386,7 +386,7 @@ test("artifact path guards reject repository and HOME sources", () => {
       planCaseRun({
         manifest,
         case: entry,
-        artifactPath: path.join(process.env.HOME ?? "", "Downloads", "openagency-skill-router-0.1.0.tgz"),
+        artifactPath: path.join(process.env.HOME ?? "", "Downloads", "openagency.io-skill-router-0.1.0.tgz"),
         runId: newRunId(),
         repoRoot,
         home: process.env.HOME,
@@ -559,7 +559,7 @@ function authCasePlan(caseId, extra = {}) {
   return planCaseRun({
     manifest,
     case: descriptor,
-    artifactPath: "/tmp/skill-router-pack-unit/openagency-skill-router-0.1.0.tgz",
+    artifactPath: "/tmp/skill-router-pack-unit/openagency.io-skill-router-0.1.0.tgz",
     runId: newRunId(),
     repoRoot,
     home: "/Users/nobody-home",
@@ -934,7 +934,7 @@ test("every writable tmpfs is explicitly noexec and validated as such", () => {
   const plan = planCaseRun({
     manifest,
     case: expandMatrix(manifest).find((entry) => entry.id === "opencode-v1-select"),
-    artifactPath: "/tmp/skill-router-pack-unit/openagency-skill-router-0.1.0.tgz",
+    artifactPath: "/tmp/skill-router-pack-unit/openagency.io-skill-router-0.1.0.tgz",
     runId: newRunId(),
     repoRoot,
     home: "/Users/nobody-home",

@@ -1,5 +1,5 @@
 {
-  "name": "@openagency/skill-router",
+  "name": "@openagency.io/skill-router",
   "version": "0.1.0",
   "description": "Low-token, harness-portable routing for agent skills",
   "type": "module",

@@ -57,7 +57,7 @@ function casePlan(extra = {}) {
   return planCaseRun({
     manifest,
     case: descriptor,
-    artifactPath: "/tmp/skill-router-pack-unit/openagency-skill-router-0.1.0.tgz",
+    artifactPath: "/tmp/skill-router-pack-unit/openagency.io-skill-router-0.1.0.tgz",
     runId: newRunId(),
     repoRoot,
     home: "/Users/nobody-home",
@@ -85,7 +85,7 @@ test("allowlisted secret names are inherited by name only, never by value", () =
   const tokenRun = planCaseRun({
     manifest,
     case: claudeDescriptor,
-    artifactPath: "/tmp/skill-router-pack-unit/openagency-skill-router-0.1.0.tgz",
+    artifactPath: "/tmp/skill-router-pack-unit/openagency.io-skill-router-0.1.0.tgz",
     runId: newRunId(),
     repoRoot,
     home: "/Users/nobody-home",
@@ -407,7 +407,7 @@ test("host networking is rejected during planning and validation", () => {
       planCaseRun({
         manifest,
         case: descriptor,
-        artifactPath: "/tmp/skill-router-pack-unit/openagency-skill-router-0.1.0.tgz",
+        artifactPath: "/tmp/skill-router-pack-unit/openagency.io-skill-router-0.1.0.tgz",
         runId: newRunId(),
         repoRoot,
         home: "/Users/nobody-home",

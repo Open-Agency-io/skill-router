@@ -88,7 +88,7 @@ function makeFake({
     if (bin === "npm" && sub === "pack") {
       const destination = argv[argv.indexOf("--pack-destination") + 1];
       mkdirSync(destination, { recursive: true });
-      const name = "openagency-skill-router-0.1.0.tgz";
+      const name = "openagency.io-skill-router-0.1.0.tgz";
       writeFileSync(path.join(destination, name), "packed-artifact-bytes");
       seen.pack += 1;
       return ok(`${name}\n`);
@@ -268,7 +268,7 @@ function resolvedCaseSpec() {
   const planned = planCaseRun({
     manifest,
     case: descriptor,
-    artifactPath: path.join(os.tmpdir(), "skill-router-pack-unit", "openagency-skill-router-0.1.0.tgz"),
+    artifactPath: path.join(os.tmpdir(), "skill-router-pack-unit", "openagency.io-skill-router-0.1.0.tgz"),
     runId: newRunId(),
     repoRoot,
     home: process.env.HOME,

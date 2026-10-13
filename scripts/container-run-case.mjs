@@ -2465,7 +2465,7 @@ function fileDigest(file) {
 
 function productionSourceCandidates() {
   return [
-    pathToFileURL(path.join(INSTALL_PREFIX, "node_modules", "@openagency", "skill-router", "src", "installation.js")),
+    pathToFileURL(path.join(INSTALL_PREFIX, "node_modules", "@openagency.io", "skill-router", "src", "installation.js")),
     new URL("../src/installation.js", import.meta.url),
   ];
 }

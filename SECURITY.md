@@ -30,9 +30,22 @@ any third-party package squatting a similar name.
 
 ## Package provenance (read before installing)
 
-- The package name `@openagency/skill-router` is **provisional**: the package
-  is not published to npm, and this project's rights to the `@openagency`
-  npm scope are **unconfirmed**.
+- The package name is `@openagency.io/skill-router`. The `openagency.io` npm
+  organization was selected deliberately and ownership was **verified** (the
+  npm account `openagency-io` is an organization owner); there is no
+  scope-rights question left open. The package itself is **not published to
+  npm** and stays unpublished until the first bootstrap described in the
+  README actually runs.
+- The first bootstrap is an authenticated `npm stage publish` of the exact
+  release tarball with `--ignore-scripts`; because the package does not exist
+  yet, npm creates a public `0.0.0-stage` placeholder before a maintainer
+  reviews and approves the staged `0.1.0` with 2FA. That first version
+  therefore carries no trusted-publisher/OIDC provenance.
+- The trusted publisher for repository `Open-Agency-io/skill-router`,
+  workflow `publish-npm.yml`, stage-only permission, is **not configured
+  yet** — npm only accepts one for a package that already exists. Once it is
+  configured, the first successful OIDC stage must land within two days,
+  after which traditional npm tokens are restricted.
 - The unscoped name `skill-router` belongs to an **unrelated third-party
   publisher** and must never be installed or suggested as this project.
 - Until this repository's own release notes say otherwise, treat any

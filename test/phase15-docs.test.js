@@ -12,8 +12,10 @@
 //      dependency/lifecycle policy, privacy contracts, and the `main` PR
 //      target — each phrase cross-checked against what actually exists;
 //   4. SECURITY pins supported versions (latest 0.1.x only), the unpublished
-//      package / unconfirmed `@openagency` scope / third-party unscoped name
-//      provenance warnings, the supply-chain posture, and the private-report
+//      package / verified `openagency.io` organization scope / third-party
+//      unscoped name provenance warnings (plus the deferred first bootstrap
+//      and the not-yet-configured trusted publisher), the supply-chain
+//      posture, and the private-report
 //      contract — including that private vulnerability reporting is an
 //      external activation gate this repository does not claim is enabled,
 //      that vulnerabilities never go to public issues, and that there is no
@@ -329,9 +331,14 @@ test("SECURITY pins versions, provenance, supply chain, and the private-report c
   assert.ok(flat.includes("no backporting"), "no backporting is promised");
   assert.ok(flat.includes("no long-term support"), "no long-term support is promised");
 
-  // Provenance: unpublished package, unconfirmed scope, third-party name.
+  // Provenance: unpublished package, verified organization scope, third-party name.
   assert.ok(flat.includes("not published to npm"), "the package is documented as unpublished");
-  assert.ok(flat.includes("unconfirmed"), "the @openagency scope rights are documented as unconfirmed");
+  assert.ok(flat.includes("@openagency.io/skill-router"), "the verified package name is documented");
+  assert.ok(/ownership was[^.]*verified/i.test(flat), "the organization ownership is documented as verified");
+  assert.ok(!flat.includes("unconfirmed"), "the retired unconfirmed-scope claim is gone");
+  assert.ok(!flat.includes("@openagency/skill-router"), "the retired provisional package name is gone");
+  assert.ok(flat.includes("0.0.0-stage"), "the first bootstrap placeholder is documented");
+  assert.ok(flat.includes("not configured"), "the trusted publisher is not claimed to be configured");
   assert.ok(flat.includes("unrelated third-party"), "the unscoped name is documented as third-party");
   assert.ok(flat.includes("must never be installed or suggested"), "the squatted name is forbidden");
   assert.ok(!flat.includes("is published") && !flat.includes("has been published"), "no publication is ever claimed");

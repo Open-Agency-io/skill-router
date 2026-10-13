@@ -13,17 +13,21 @@ name: Publish npm (staged)
 #
 # Activation is external and deferred; nothing in this repository activates
 # publication:
-#   1. a human must first bootstrap the package on npm by publishing the exact
-#      Phase-11 validated tarball manually with 2FA and `--ignore-scripts`
-#      (npm staged publishing can create a package that does not exist yet,
-#      but this OIDC design cannot: a trusted publisher can only be configured
-#      once the package already exists on the registry, and the bootstrap is
-#      blocked entirely until the `@openagency` scope rights are confirmed), and
+#   1. a human must first bootstrap the package on npm by staging the exact
+#      Phase-11 validated tarball with `npm stage publish … --access public
+#      --tag latest --ignore-scripts` (npm staged publishing can create a
+#      package that does not exist yet, and ownership of the `openagency.io`
+#      scope for this package has been verified, so no scope-rights blocker
+#      remains: the bootstrap is an authenticated human step that publicly
+#      creates a `0.0.0-stage` placeholder before a maintainer approves it
+#      with 2FA — approval never happens in this repository), and
 #   2. an npm trusted publisher must then be configured for this repository,
 #      for this workflow's exact filename `publish-npm.yml`, with stage-only
-#      permission (npm requires the workflow filename to match exactly).
+#      permission (npm requires the workflow filename to match exactly); its
+#      first successful OIDC stage must land within npm's two-day activation
+#      window, after which traditional npm tokens are restricted.
 #   The manually bootstrapped *first* version cannot carry trusted-publisher
-#   OIDC provenance — it is published by a human with 2FA. Later public
+#   OIDC provenance — it is approved by a human with 2FA. Later public
 #   versions staged through this workflow get npm's automatic provenance as
 #   long as the repository and the package are public.
 #
@@ -127,7 +131,7 @@ jobs:
             exit 1
           fi
           version=${RELEASE_TAG#v}
-          package_name='@openagency/skill-router'
+          package_name='@openagency.io/skill-router'
           unscoped_name=${package_name#@}
           expected_name="${unscoped_name//\//-}-${version}.tgz"
 
@@ -1096,7 +1100,7 @@ jobs:
               ;;
           esac
           case "$PACKAGE_NAME" in
-            "@openagency/skill-router")
+            "@openagency.io/skill-router")
               ;;
             *)
               echo "refusing an unexpected recorded package name" >&2
