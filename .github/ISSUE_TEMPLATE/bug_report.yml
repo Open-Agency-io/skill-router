@@ -1,0 +1,104 @@
+name: Bug report
+description: Report a reproducible problem with the skill-router CLI
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please **search existing issues** first.
+
+        **Privacy warning — required reading before you paste anything:**
+        never include request bodies, request text, spool tokens, file
+        digests, credentials, or sensitive local filesystem paths in this
+        form. Redact them. The router's own diagnostics are designed to keep
+        request material out of errors; your report must keep it out too.
+
+        **Security vulnerabilities do not belong here.** Report them
+        privately as described in [SECURITY.md](https://github.com/Open-Agency-io/skill-router/blob/main/SECURITY.md).
+
+  - type: input
+    id: skill-router-version
+    attributes:
+      label: skill-router version
+      description: Output of `skill-router --version` (or `node src/cli.js --version` in a checkout).
+      placeholder: 0.1.0
+    validations:
+      required: true
+
+  - type: input
+    id: node-version
+    attributes:
+      label: Node.js version
+      description: Output of `node --version`. Node 20 or newer is required; older versions are unsupported.
+      placeholder: v20.0.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: operating-system
+    attributes:
+      label: Operating system
+      description: Windows is unsupported — every command that crosses the controlled boundary fails with `PLATFORM_UNSUPPORTED` before any router filesystem mutation. A Windows report is expected to be that refusal, not a workaround.
+      options:
+        - Linux
+        - macOS (not CI-qualified — developer-tested only)
+    validations:
+      required: true
+
+  - type: input
+    id: harness
+    attributes:
+      label: Harness and harness version
+      description: Which agent harness was active, and its version (for example `opencode 1.18.20`, `Claude Code 2.1.231`, or `none`).
+      placeholder: opencode 1.18.20
+    validations:
+      required: true
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Router scope
+      options:
+        - project (default)
+        - global
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Exact commands, in order, from a clean state. Redact anything private; describe removed content as `<redacted>` rather than pasting it.
+      placeholder: |
+        1. skill-router init --harness opencode
+        2. skill-router add <path-to-a-test-skill>
+        3. skill-router scan
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What you expected to happen, including the exact command and any documented contract you were relying on.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead. Paste CLI output only after redacting paths, tokens, digests, and request text.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I searched existing issues and did not find this report.
+          required: true
+        - label: I redacted request bodies, tokens, digests, credentials, and sensitive local paths from this report.
+          required: true
+        - label: This is not a security vulnerability (those go through the private channel in SECURITY.md).
+          required: true

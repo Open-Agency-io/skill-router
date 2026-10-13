@@ -4,3 +4,4 @@ dist/
 .skill-router/
 .slim/deepwork/
 artifacts/
+SESSION_HANDOFF.md

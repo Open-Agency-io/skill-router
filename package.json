@@ -8,14 +8,29 @@
   },
   "scripts": {
     "test": "node --test",
-    "check": "node --check src/*.js"
+    "test:container": "node --test test/container-plan.test.js test/container-security.test.js test/container-lifecycle.test.js test/container-case.test.js",
+    "check": "node scripts/check.mjs",
+    "gate:clean": "node scripts/clean-candidate.mjs",
+    "gate:release": "node scripts/release-dist.mjs",
+    "test:opencode-e2e": "node scripts/opencode-e2e.mjs",
+    "container:list": "node scripts/container-harness.mjs list",
+    "container:plan": "node scripts/container-harness.mjs plan",
+    "container:pack": "node scripts/container-harness.mjs pack",
+    "container:build": "node scripts/container-harness.mjs build",
+    "container:smoke": "node scripts/container-harness.mjs smoke",
+    "container:auth-check": "node scripts/container-harness.mjs auth-check",
+    "container:run": "node scripts/container-harness.mjs run",
+    "validate:record": "bash scripts/record-validation.sh"
   },
   "engines": {
     "node": ">=20"
   },
+  "os": [
+    "darwin",
+    "linux"
+  ],
   "files": [
     "src",
-    "skills",
     "README.md",
     "LICENSE"
   ],
@@ -25,5 +40,21 @@
     "skill-router",
     "llm"
   ],
-  "license": "MIT"
+  "homepage": "https://github.com/Open-Agency-io/skill-router#readme",
+  "bugs": {
+    "url": "https://github.com/Open-Agency-io/skill-router/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Open-Agency-io/skill-router.git"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public",
+    "tag": "latest"
+  },
+  "dependencies": {
+    "yaml": "2.9.1"
+  }
 }

@@ -1,0 +1,71 @@
+[
+  {
+    "type": "system",
+    "subtype": "init",
+    "session_id": "11111111-2222-3333-4444-555555555555",
+    "tools": [
+      "Skill",
+      "Write",
+      "Bash"
+    ],
+    "skills": {
+      "update-config": [
+        "updates configuration"
+      ]
+    },
+    "mcp_servers": [],
+    "plugins": [
+      { "name": "cc-plugin-agents-md", "path": "builtin" },
+      { "name": "cc-plugin-plugin-authoring", "path": "builtin" }
+    ],
+    "slash_commands": []
+  },
+  {
+    "type": "assistant",
+    "session_id": "11111111-2222-3333-4444-555555555555",
+    "message": {
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "t1",
+          "name": "Skill",
+          "input": {
+            "skill": "openagency-skill-router:skill-router"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "user",
+    "session_id": "11111111-2222-3333-4444-555555555555",
+    "message": {
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "t1",
+          "content": "skill not found",
+          "is_error": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "session_id": "11111111-2222-3333-4444-555555555555",
+    "message": {
+      "content": [
+        {
+          "type": "text",
+          "text": "The skill-router skill is unavailable in this environment."
+        }
+      ]
+    }
+  },
+  {
+    "type": "result",
+    "subtype": "success",
+    "is_error": false,
+    "session_id": "11111111-2222-3333-4444-555555555555"
+  }
+]

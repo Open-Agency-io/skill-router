@@ -1,0 +1,84 @@
+name: CI
+
+# Pushes to main and every pull request. Least privilege by default: the
+# workflow token can read the repository only; no job escalates it.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: verify (node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # engines.node is ">=20": the declared minimum plus the active LTS line.
+        node-version: ["20", "24"]
+    steps:
+      - name: Checkout
+        # actions/checkout v7.0.1, pinned to an immutable commit SHA.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Candidate code runs in this workspace (tests + local checks), so no
+          # token is ever persisted into the checkout's git configuration.
+          persist-credentials: false
+
+      - name: Set up Node.js
+        # actions/setup-node v7.1.0, pinned to an immutable commit SHA.
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Release check gate
+        run: npm run check
+
+      - name: Test suite
+        run: npm test
+
+  # The clean-candidate gate repeats `npm ci` + `npm run check` + `npm test`
+  # inside a genuinely clean clone, so running it once per matrix line would
+  # pay that full cost twice for the same candidate. It runs once, on the
+  # current line, only after both Node lines have already passed check/test —
+  # the minimum (20) and current (24) evidence above stays untouched.
+  #
+  # No `npm ci` here: the gate installs the pinned lockfile itself inside the
+  # clean clone it builds, which is the evidence this job exists for, and the
+  # gate script depends on nothing but Node built-ins.
+  clean-gate:
+    name: clean-candidate gate
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        # actions/checkout v7.0.1, pinned to an immutable commit SHA.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        # actions/setup-node v7.1.0, pinned to an immutable commit SHA.
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+
+      - name: Clean-candidate gate
+        # Non-recursive: the gate refuses to start under its own child flag,
+        # so its internal `npm test` cannot launch another gate.
+        run: npm run gate:clean

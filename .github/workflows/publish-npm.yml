@@ -1,0 +1,1164 @@
+name: Publish npm (staged)
+
+# Phase 12 — GitHub-first, manual-only npm *staging*.
+#
+# This workflow is dormant by construction. It is triggered exclusively by an
+# explicit `workflow_dispatch` run that must supply an existing release tag;
+# it never runs on push, tag, release, or schedule, and it never publishes:
+# it re-verifies the Phase-11 GitHub Release bundle and runs exactly one npm
+# command — `npm stage publish <the release tarball>` — which places the
+# version in a staged, not-yet-public state without any 2FA prompt. Approving
+# the staged version stays a manual npm-maintainer action (proof-of-presence,
+# 2FA) and is never performed here.
+#
+# Activation is external and deferred; nothing in this repository activates
+# publication:
+#   1. a human must first bootstrap the package on npm by publishing the exact
+#      Phase-11 validated tarball manually with 2FA and `--ignore-scripts`
+#      (npm staged publishing can create a package that does not exist yet,
+#      but this OIDC design cannot: a trusted publisher can only be configured
+#      once the package already exists on the registry, and the bootstrap is
+#      blocked entirely until the `@openagency` scope rights are confirmed), and
+#   2. an npm trusted publisher must then be configured for this repository,
+#      for this workflow's exact filename `publish-npm.yml`, with stage-only
+#      permission (npm requires the workflow filename to match exactly).
+#   The manually bootstrapped *first* version cannot carry trusted-publisher
+#   OIDC provenance — it is published by a human with 2FA. Later public
+#   versions staged through this workflow get npm's automatic provenance as
+#   long as the repository and the package are public.
+#
+# The job never checks out the repository and never executes repository code:
+# every command below is fixed script text, written to the runner workspace at
+# run time, so nothing candidate-controlled can reach this job. The only
+# credential in this job is the read-only `github.token`, read into
+# `env.GH_TOKEN` and used solely by `gh` to query the release and to download
+# its assets — it is never expanded inside a script, and no long-lived token
+# exists here. npm authentication is OIDC trusted publishing: no npm token of
+# any kind (no `NODE_AUTH_TOKEN`, no `NPM_TOKEN`, no `_authToken` value).
+# `actions/setup-node`'s `registry-url` does point npm at the public registry
+# and writes a runner-side npmrc *placeholder* `${NODE_AUTH_TOKEN}` through
+# `NPM_CONFIG_USERCONFIG`; that variable is never set here, so the placeholder
+# resolves to nothing and npm authenticates through OIDC instead. npm attaches
+# provenance to the staged version automatically for that identity.
+#
+# Required toolchain: staged publishing needs npm >= 11.15.0 (and Node
+# >= 22.14), trusted publishing needs npm >= 11.5.1. This job installs the
+# exact release 11.20.0 and fails if `npm --version` disagrees.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing GitHub Release tag carrying the validated bundle (exact stable vX.Y.Z)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-npm
+  cancel-in-progress: false
+
+jobs:
+  stage:
+    name: stage the validated release tarball on npm
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      # Exactly what OIDC staging needs: read the release, mint an identity
+      # token for npm, and nothing else. No `contents: write`, no secrets.
+      contents: read
+      id-token: write
+    steps:
+      - name: Set up Node.js
+        # actions/setup-node v7.1.0, pinned to an immutable commit SHA.
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+          # Caching is explicitly disabled: this job checks out nothing and
+          # installs no dependencies, so there is no dependency tree to key.
+          cache: ""
+
+      - name: Install and verify the exact npm release
+        # Staged publishing needs npm >= 11.15.0, trusted publishing needs
+        # npm >= 11.5.1; 11.20.0 is installed and then re-checked, so a
+        # runner-provided npm of any other version fails the job.
+        run: |
+          set -euo pipefail
+          npm install --global npm@11.20.0 --no-audit --no-fund
+          installed=$(npm --version)
+          if [ "$installed" != "11.20.0" ]; then
+            echo "expected npm 11.20.0, found $installed" >&2
+            exit 1
+          fi
+
+      - name: Verify the release bundle exactly as Phase 11 produced it
+        id: verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.inputs.release_tag }}
+        run: |
+          set -euo pipefail
+
+          # 0. This job may only ever act on its own repository: the release
+          #    query, the asset download, and the OIDC subject all depend on
+          #    it. Checked before anything at all is requested, and
+          #    `GITHUB_REPOSITORY` is runner-provided environment, never a
+          #    workflow expression interpolated into this script.
+          if [ "${GITHUB_REPOSITORY:-}" != "Open-Agency-io/skill-router" ]; then
+            echo "refusing to run outside Open-Agency-io/skill-router (GITHUB_REPOSITORY is '${GITHUB_REPOSITORY:-unset}')" >&2
+            exit 1
+          fi
+
+          # 1. The tag must be an exact stable semantic version: no unsafe
+          #    characters, no leading zeros, and no prerelease or build
+          #    suffix — this job stages `latest`, so only a stable tag fits.
+          case "$RELEASE_TAG" in
+            v[0-9]*) ;;
+            *)
+              echo "refusing unexpected release tag: $RELEASE_TAG" >&2
+              exit 1
+              ;;
+          esac
+          if [[ ! "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "refusing a non-exact or prerelease release tag for tag latest: $RELEASE_TAG" >&2
+            exit 1
+          fi
+          version=${RELEASE_TAG#v}
+          package_name='@openagency/skill-router'
+          unscoped_name=${package_name#@}
+          expected_name="${unscoped_name//\//-}-${version}.tgz"
+
+          # 2. The remote asset contract, before a single byte is downloaded:
+          #    the exact tag, not draft, not prerelease, and exactly the two
+          #    assets Phase 11 produced — no extras, no missing, no renamed,
+          #    no duplicates — each with a bounded, sensible size and a
+          #    well-formed (or absent) server digest. The projection keeps
+          #    only tag/draft/prerelease/count and one name=size=digest entry
+          #    per asset, so the response is bounded and never a page of
+          #    release prose. Nothing is written to disk for it either: the
+          #    single tab-separated line arrives in this shell.
+          if ! contract=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq '[.tag_name, (.draft|tostring), (.prerelease|tostring), ((.assets|length)|tostring), ([.assets[] | "\(.name)=\(.size)=\(.digest // "-")"] | sort | join(","))] | @tsv'); then
+            echo "no GitHub release found for $RELEASE_TAG" >&2
+            exit 1
+          fi
+          if [ "${#contract}" -gt 4096 ]; then
+            echo "refusing an oversized release description" >&2
+            exit 1
+          fi
+          IFS=$'\t' read -r -a contract_fields <<< "$contract"
+          if [ "${#contract_fields[@]}" -ne 5 ]; then
+            echo "refusing a release description without exactly five fields" >&2
+            exit 1
+          fi
+          if [ "${contract_fields[0]}" != "$RELEASE_TAG" ]; then
+            echo "refusing a release whose tag does not match $RELEASE_TAG" >&2
+            exit 1
+          fi
+          if [ "${contract_fields[1]}" != "false" ]; then
+            echo "refusing a draft release: $RELEASE_TAG" >&2
+            exit 1
+          fi
+          if [ "${contract_fields[2]}" != "false" ]; then
+            echo "refusing a prerelease release for tag latest: $RELEASE_TAG" >&2
+            exit 1
+          fi
+          if [ "${contract_fields[3]}" != "2" ]; then
+            echo "refusing a release that does not carry exactly two assets" >&2
+            exit 1
+          fi
+          IFS=',' read -r -a asset_entries <<< "${contract_fields[4]}"
+          if [ "${#asset_entries[@]}" -ne 2 ]; then
+            echo "refusing a release asset list that is not exactly two entries" >&2
+            exit 1
+          fi
+          seen_tarball=0
+          seen_sums=0
+          REMOTE_TARBALL_SIZE=""
+          REMOTE_TARBALL_DIGEST=""
+          REMOTE_SUMS_SIZE=""
+          REMOTE_SUMS_DIGEST=""
+          for asset in "${asset_entries[@]}"; do
+            IFS='=' read -r asset_name asset_size asset_digest <<< "$asset"
+            case "$asset_name" in
+              "$expected_name")
+                case "$asset_size" in
+                  ""|*[!0-9]*)
+                    echo "refusing a non-numeric size for $asset_name" >&2
+                    exit 1
+                    ;;
+                esac
+                if [ "${#asset_size}" -gt 10 ] || [ "$asset_size" -lt 100 ] || [ "$asset_size" -gt 67108864 ]; then
+                  echo "refusing a tarball size outside 100..67108864 bytes: $asset_size" >&2
+                  exit 1
+                fi
+                case "$asset_digest" in
+                  "-")
+                    REMOTE_TARBALL_DIGEST=""
+                    ;;
+                  sha256:*)
+                    digest_hex=${asset_digest#sha256:}
+                    case "$digest_hex" in
+                      ""|*[!0-9a-f]*)
+                        echo "refusing a malformed server digest for $asset_name" >&2
+                        exit 1
+                        ;;
+                    esac
+                    if [ "${#digest_hex}" -ne 64 ]; then
+                      echo "refusing a server digest that is not 64 hex characters" >&2
+                      exit 1
+                    fi
+                    REMOTE_TARBALL_DIGEST=$asset_digest
+                    ;;
+                  *)
+                    echo "refusing an unexpected server digest for $asset_name" >&2
+                    exit 1
+                    ;;
+                esac
+                REMOTE_TARBALL_SIZE=$asset_size
+                seen_tarball=$((seen_tarball + 1))
+                ;;
+              SHA256SUMS)
+                case "$asset_size" in
+                  ""|*[!0-9]*)
+                    echo "refusing a non-numeric size for SHA256SUMS" >&2
+                    exit 1
+                    ;;
+                esac
+                if [ "${#asset_size}" -gt 10 ] || [ "$asset_size" -lt 1 ] || [ "$asset_size" -gt 1024 ]; then
+                  echo "refusing a SHA256SUMS size outside 1..1024 bytes: $asset_size" >&2
+                  exit 1
+                fi
+                case "$asset_digest" in
+                  "-")
+                    REMOTE_SUMS_DIGEST=""
+                    ;;
+                  sha256:*)
+                    digest_hex=${asset_digest#sha256:}
+                    case "$digest_hex" in
+                      ""|*[!0-9a-f]*)
+                        echo "refusing a malformed server digest for SHA256SUMS" >&2
+                        exit 1
+                        ;;
+                    esac
+                    if [ "${#digest_hex}" -ne 64 ]; then
+                      echo "refusing a server digest that is not 64 hex characters" >&2
+                      exit 1
+                    fi
+                    REMOTE_SUMS_DIGEST=$asset_digest
+                    ;;
+                  *)
+                    echo "refusing an unexpected server digest for SHA256SUMS" >&2
+                    exit 1
+                    ;;
+                esac
+                REMOTE_SUMS_SIZE=$asset_size
+                seen_sums=$((seen_sums + 1))
+                ;;
+              *)
+                echo "refusing an unexpected release asset: $asset_name" >&2
+                exit 1
+                ;;
+            esac
+          done
+          if [ "$seen_tarball" -ne 1 ] || [ "$seen_sums" -ne 1 ]; then
+            echo "the release must carry exactly one $expected_name and one SHA256SUMS" >&2
+            exit 1
+          fi
+
+          # 3. Only now, with the contract proven, download the two assets
+          #    with the built-in `gh` and the read-only token. The token is
+          #    read from the environment by `gh` itself; it is never expanded
+          #    here and never sent anywhere else (no curl, no wget).
+          mkdir -p release-assets
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir release-assets --pattern '*.tgz' --pattern 'SHA256SUMS'
+
+          # 4. Exactly two ordinary non-symlink files, exactly one tarball,
+          #    under exactly the name the contract promised.
+          shopt -s nullglob dotglob
+          entries=(release-assets/*)
+          if [ "${#entries[@]}" -ne 2 ]; then
+            echo "expected exactly two release assets, found ${#entries[@]}" >&2
+            for found in ${entries[@]+"${entries[@]}"}; do
+              printf '  %s\n' "$found" >&2
+            done
+            exit 1
+          fi
+          tarballs=(release-assets/*.tgz)
+          if [ "${#tarballs[@]}" -ne 1 ]; then
+            echo "expected exactly one release tarball, found ${#tarballs[@]}" >&2
+            exit 1
+          fi
+          tarball=${tarballs[0]}
+          if [ -L "$tarball" ] || [ -L release-assets/SHA256SUMS ] || [ ! -f "$tarball" ] || [ ! -f release-assets/SHA256SUMS ]; then
+            echo "both release assets must be regular files, never links" >&2
+            exit 1
+          fi
+          tarball_name=${tarball#release-assets/}
+          case "$tarball_name" in
+            ""|*[!0-9A-Za-z._~+-]*)
+              echo "refusing an unsafe release asset name: $tarball_name" >&2
+              exit 1
+              ;;
+          esac
+          if [ "$tarball_name" != "$expected_name" ]; then
+            echo "tarball name mismatch: $tarball_name != $expected_name" >&2
+            exit 1
+          fi
+
+          # 5. The strict verifier, written here as fixed script text (no
+          #    repository file is read) and then executed: now to record the
+          #    stable identities, and once more in the staging step
+          #    immediately before npm runs.
+          VERIFY_SCRIPT=.phase12-publish-verify.cjs
+          cat > "$VERIFY_SCRIPT" <<'PUBLISH_NPM_VERIFY_EOF'
+          "use strict";
+          // Phase 12 — strict bundle verifier for the publish-npm workflow.
+          //
+          //   verify    validate the downloaded bundle against the remote
+          //             release contract and record stable identities;
+          //   reverify  perform exactly the same validation immediately
+          //             before staging, comparing against those identities.
+          //
+          // No member is ever extracted: the gzip stream is decompressed in
+          // memory and the archive headers are parsed here. No path taken
+          // from the checksum file is ever opened — only TARBALL_PATH and
+          // SUMS_PATH, both supplied by the workflow — and each of those is
+          // read through a bounded, no-follow, single-link regular-file
+          // routine that re-checks identity before, during, and after the
+          // read. The archive parser accepts exactly the POSIX ustar shape
+          // npm pack produces here and refuses everything else: pax, GNU
+          // long-name, sparse, link, device, and unknown member types, base
+          //  non-octal numerics, prefix fields, non-canonical names, and
+          //  duplicate members.
+          const crypto = require("node:crypto");
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const zlib = require("node:zlib");
+
+          class Refusal extends Error {}
+
+          function refuse(message) {
+            throw new Refusal(message);
+          }
+
+          const LIMITS = {
+            tarballMax: 64 * 1024 * 1024,
+            archiveMax: 32 * 1024 * 1024,
+            sumsMax: 4096,
+            manifestMax: 256 * 1024,
+            memberMax: 4 * 1024 * 1024,
+            totalMax: 16 * 1024 * 1024,
+            membersMax: 512,
+            nameMax: 99,
+            // The remote contract in the shell applies the sensible floor
+            // (100 bytes for a tarball); here the downloaded size must simply
+            // be non-empty and no larger than the reader bound, because it is
+            // already reconciled for exact equality with that contract.
+            remoteTarballMin: 1,
+            remoteTarballMax: 64 * 1024 * 1024,
+            remoteSumsMin: 1,
+            remoteSumsMax: 1024,
+          };
+
+          const REPOSITORY_URL = "git+https://github.com/Open-Agency-io/skill-router.git";
+          const HOMEPAGE_URL = "https://github.com/Open-Agency-io/skill-router#readme";
+          const BUGS_URL = "https://github.com/Open-Agency-io/skill-router/issues";
+          const REGISTRY_URL = "https://registry.npmjs.org/";
+          const FORBIDDEN_SCRIPTS = [
+            "install",
+            "preinstall",
+            "postinstall",
+            "prepare",
+            "prepack",
+            "postpack",
+            "prepublish",
+            "prepublishOnly",
+            "publish",
+            "postpublish",
+          ];
+          const UTF8 = new TextDecoder("utf-8", { fatal: true });
+          const PLAIN_NAME = /^[0-9A-Za-z._~+-]+$/;
+          const HEX_64 = /^[0-9a-f]{64}$/;
+          // "ustar" + NUL + "00": the exact POSIX ustar magic and version.
+          const USTAR_MAGIC = [0x75, 0x73, 0x74, 0x61, 0x72, 0x00, 0x30, 0x30];
+          const NUL = 0;
+
+          function decodeUtf8(bytes, label) {
+            try {
+              return UTF8.decode(bytes);
+            } catch (error) {
+              refuse(label + " is not valid UTF-8");
+              return "";
+            }
+          }
+
+          function readEnv(name, required) {
+            const value = process.env[name];
+            if (value === undefined || value === "") {
+              if (required) refuse("missing required input " + name);
+              return "";
+            }
+            return value;
+          }
+
+          function isZero(bytes) {
+            for (let index = 0; index < bytes.length; index += 1) {
+              if (bytes[index] !== 0) return false;
+            }
+            return true;
+          }
+
+          function containsControlByte(text) {
+            for (const character of text) {
+              const code = character.codePointAt(0);
+              if (code < 0x20 || code === 0x7f) return true;
+            }
+            return false;
+          }
+
+          /**
+           * The only file reader: lstat first (so a FIFO, directory, or
+           * symlink is refused without ever being opened), then an
+           * O_NOFOLLOW open, then pre/post identity, size, mode, and link
+           * checks around one bounded read, then a settled lstat that must
+           * agree on dev, ino, size, mode, link count, mtime, and ctime.
+           * Every stat is taken with `bigint: true`, so the comparison uses
+           * exact integer nanosecond timestamps rather than rounded doubles,
+           * and is identical on Node 20 and Node 24.
+           *
+           * Residual boundary, stated precisely: this proves the file did not
+           * drift while it was read, and the staging step re-runs the whole
+           * check immediately before npm starts — but no check can bind this
+           * function's successful return, or the verifier's exit, atomically
+           * to npm's later open of the same pathname. A hostile concurrent
+           * same-user writer racing inside that window, and any hostile
+           * same-user writer generally, is outside this control.
+           */
+          function readStableFile(filePath, maxBytes, label) {
+            const bound = BigInt(maxBytes);
+            let initial;
+            try {
+              initial = fs.lstatSync(filePath, { bigint: true });
+            } catch (error) {
+              refuse(label + " is missing (" + String(error && error.code) + ")");
+            }
+            if (initial.isSymbolicLink()) refuse(label + " must not be a symbolic link");
+            if (!initial.isFile()) refuse(label + " must be a regular file");
+            if (initial.nlink !== 1n) refuse(label + " must be a single-link file");
+            if (initial.size <= 0n || initial.size > bound) {
+              refuse(label + " size " + String(initial.size) + " is outside the accepted bound");
+            }
+
+            let descriptor;
+            try {
+              descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+            } catch (error) {
+              refuse(label + " could not be opened without following links (" + String(error && error.code) + ")");
+            }
+            try {
+              const opened = fs.fstatSync(descriptor, { bigint: true });
+              if (!opened.isFile() || opened.isSymbolicLink()) refuse(label + " is not a regular file at open time");
+              if (opened.nlink !== 1n) refuse(label + " is linked more than once");
+              if (
+                opened.dev !== initial.dev ||
+                opened.ino !== initial.ino ||
+                opened.mode !== initial.mode ||
+                opened.nlink !== initial.nlink ||
+                opened.size !== initial.size
+              ) {
+                refuse(label + " changed between lstat and open");
+              }
+              if (opened.size <= 0n || opened.size > bound) {
+                refuse(label + " size is outside the accepted bound");
+              }
+              const buffer = fs.readFileSync(descriptor);
+              const after = fs.fstatSync(descriptor, { bigint: true });
+              if (
+                opened.dev !== after.dev ||
+                opened.ino !== after.ino ||
+                opened.size !== after.size ||
+                opened.mode !== after.mode ||
+                opened.nlink !== after.nlink ||
+                opened.mtimeNs !== after.mtimeNs ||
+                opened.ctimeNs !== after.ctimeNs
+              ) {
+                refuse(label + " changed while it was read");
+              }
+              if (BigInt(buffer.length) !== after.size) refuse(label + " was read incompletely");
+
+              // Narrow test seam. It is armed only by an environment variable
+              // whose value must equal the label of the file being read, and
+              // the workflow never sets that variable; it mutates the file's
+              // metadata between the post-read fstat and the settled lstat so
+              // a test can prove that comparison refuses.
+              if (process.env.PUBLISH_NPM_TEST_SEAM === label) {
+                fs.chmodSync(filePath, 0o444);
+              }
+
+              const settled = fs.lstatSync(filePath, { bigint: true });
+              if (
+                settled.dev !== after.dev ||
+                settled.ino !== after.ino ||
+                settled.size !== after.size ||
+                settled.mode !== after.mode ||
+                settled.nlink !== after.nlink ||
+                settled.mtimeNs !== after.mtimeNs ||
+                settled.ctimeNs !== after.ctimeNs
+              ) {
+                refuse(label + " changed after it was read");
+              }
+              return {
+                buffer: buffer,
+                size: Number(after.size),
+                mode: (Number(after.mode) & 0o777).toString(8),
+                sha256: crypto.createHash("sha256").update(buffer).digest("hex"),
+              };
+            } finally {
+              fs.closeSync(descriptor);
+            }
+          }
+
+          /**
+           * SHA256SUMS must be exactly
+           *   <64 lowercase hex><two spaces><the expected tarball name><LF>
+           * The parsed value is only ever compared with the digest of the
+           * tarball we already hold: no name it contains is ever opened, so
+           * an absolute path, a traversal, or a FIFO listed there is never
+           * touched.
+           */
+          function parseChecksums(bytes, expectedName) {
+            const text = decodeUtf8(bytes, "SHA256SUMS");
+            if (text.indexOf(String.fromCharCode(NUL)) !== -1) refuse("SHA256SUMS must not contain a NUL byte");
+            if (!PLAIN_NAME.test(expectedName)) refuse("the expected tarball name is not a plain file name");
+            const escaped = expectedName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            if (!new RegExp("^[0-9a-f]{64}  " + escaped + "\n$").test(text)) {
+              refuse(
+                "SHA256SUMS must be exactly one line: 64 lowercase hex digits, two spaces, the tarball name, and a newline",
+              );
+            }
+            const digest = text.slice(0, 64);
+            if (!HEX_64.test(digest)) refuse("SHA256SUMS does not start with a lowercase sha256 digest");
+            return digest;
+          }
+
+          /**
+           * Strict POSIX ustar numeric field: zero-padded octal digits then
+           * one space and one NUL (either order), or — for the fields npm
+           * leaves unset — entirely NUL. Base-256 and every other encoding
+           * are refused.
+           */
+          function readNumeric(header, offset, length, label, options) {
+            const field = header.subarray(offset, offset + length);
+            if (isZero(field)) {
+              if (options.zeroOk) return 0;
+              refuse("the " + label + " field is empty");
+            }
+            const digits = length - 2;
+            let count = 0;
+            while (count < digits) {
+              const byte = field[count];
+              if (byte < 0x30 || byte > 0x37) break;
+              count += 1;
+            }
+            if (count === 0) refuse("the " + label + " field is not octal (base-256 encodings are refused)");
+            if (count !== digits) refuse("the " + label + " field is not zero-padded octal");
+            const first = field[digits];
+            const second = field[digits + 1];
+            const spaced = first === 0x20 && second === NUL;
+            const nulled = first === NUL && second === 0x20;
+            if (!spaced && !nulled) refuse("the " + label + " field has an invalid terminator");
+            const value = Number.parseInt(field.subarray(0, digits).toString("latin1"), 8);
+            if (!Number.isSafeInteger(value)) refuse("the " + label + " field is out of range");
+            if (options.max !== undefined && value > options.max) refuse("the " + label + " field exceeds the accepted bound");
+            return value;
+          }
+
+          function readName(header) {
+            const field = header.subarray(0, 100);
+            let end = 0;
+            while (end < 100 && field[end] !== NUL) end += 1;
+            if (end === 100) refuse("a member name is not NUL-terminated inside the name field");
+            for (let index = end; index < 100; index += 1) {
+              if (field[index] !== NUL) refuse("a member name has non-zero padding");
+            }
+            if (end === 0) refuse("a member name is empty");
+            if (end > LIMITS.nameMax) refuse("a member name exceeds the accepted length bound");
+            return decodeUtf8(field.subarray(0, end), "a member name");
+          }
+
+          function refuseType(typeByte) {
+            const known = {
+              49: "hard link",
+              50: "symbolic link",
+              51: "character device",
+              52: "block device",
+              54: "FIFO",
+              55: "contiguous file",
+              103: "pax global header",
+              120: "pax extended header",
+              75: "GNU long link name",
+              76: "GNU long name",
+              83: "GNU sparse",
+              68: "GNU directory mirror",
+              77: "GNU multi-volume",
+              86: "GNU volume header",
+            };
+            if (Object.prototype.hasOwnProperty.call(known, typeByte)) {
+              refuse("the archive contains a " + known[typeByte] + " entry, which npm-pack never produces");
+            }
+            refuse("the archive contains an unknown member type (" + typeByte + ")");
+          }
+
+          /**
+           * Canonical member name: `package/`-rooted, slash separated, no
+           * empty, dot, dot-dot, or backslash segment, bounded length, no
+           * control bytes. Returns the canonical key (directories lose their
+           * trailing slash) so aliased spellings cannot dodge duplicates.
+           */
+          function canonicalMemberName(name, isDirectory) {
+            if (name.indexOf("package/") !== 0) refuse("a member is not inside the package/ directory");
+            if (name.indexOf("\\") !== -1) refuse("a member name contains a backslash");
+            if (containsControlByte(name)) refuse("a member name contains a control byte");
+            if (isDirectory && !name.endsWith("/")) refuse("a directory member name must end with a slash");
+            if (!isDirectory && name.endsWith("/")) refuse("a file member name must not end with a slash");
+            const parts = name.split("/");
+            const segments = isDirectory ? parts.slice(0, -1) : parts;
+            for (const segment of segments) {
+              if (segment === "") refuse("a member name contains an empty path segment");
+              if (segment === "." || segment === "..") refuse("a member name contains a dot path segment");
+            }
+            return isDirectory ? name.slice(0, -1) : name;
+          }
+
+          // ---- Exactly one gzip member, fully consumed ---------------------
+          // RFC 1952 shape, bounded: a 10-byte header whose FLG byte must be
+          // exactly zero (so no FEXTRA, FNAME, FCOMMENT, FHCRC, and no
+          // reserved bit), one raw DEFLATE stream, then one 8-byte footer
+          // holding CRC32 and ISIZE. `zlib.gunzipSync` is deliberately not
+          // used: it accepts concatenated members, and trusting it would let
+          // a second gzip member hide behind the first.
+
+          const CRC_TABLE = (function () {
+            const table = new Uint32Array(256);
+            for (let index = 0; index < 256; index += 1) {
+              let value = index;
+              for (let bit = 0; bit < 8; bit += 1) {
+                value = (value & 1) === 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+              }
+              table[index] = value >>> 0;
+            }
+            return table;
+          })();
+
+          /** Bounded CRC32 (RFC 1952 uses CRC-32/ISO-HDLC) over already
+           *  size-bounded output; implemented here because `zlib.crc32` is
+           *  not available on every Node release this package supports. */
+          function crc32(bytes) {
+            let crc = 0xffffffff;
+            for (let index = 0; index < bytes.length; index += 1) {
+              crc = CRC_TABLE[(crc ^ bytes[index]) & 0xff] ^ (crc >>> 8);
+            }
+            return (crc ^ 0xffffffff) >>> 0;
+          }
+
+          /**
+           * Probe one candidate prefix of a raw DEFLATE stream.
+           *
+           * Node's `inflateRawSync` reports success for a complete stream and
+           * *ignores* anything after it (verified behaviour this design
+           * relies on and tests pin), so "inflates successfully" is monotone
+           * in the prefix length: false below the true stream end, true from
+           * it onwards. Binary-searching that predicate recovers the exact
+           * number of bytes the single DEFLATE stream consumes, which is what
+           * makes trailing bytes — including a concatenated second gzip
+           * member — detectable instead of silently ignored.
+           */
+          function inflateProbe(bytes) {
+            try {
+              return { ok: true, output: zlib.inflateRawSync(bytes, { maxOutputLength: LIMITS.archiveMax }) };
+            } catch (error) {
+              const code = String(error && error.code);
+              const message = String(error && error.message);
+              if (code === "ERR_BUFFER_TOO_LARGE" || message.indexOf("maxOutputLength") !== -1) {
+                refuse("the release tarball expands beyond the accepted bound");
+              }
+              if (code === "Z_BUF_ERROR" || message.indexOf("unexpected end of file") !== -1) {
+                return { premature: true };
+              }
+              return { corrupt: true };
+            }
+          }
+
+          /** Decompress exactly one gzip member and verify its footer. */
+          function gunzipSingleMember(compressed) {
+            if (compressed.length < 20) refuse("the release tarball is not an acceptable gzip stream");
+            if (compressed[0] !== 0x1f || compressed[1] !== 0x8b) refuse("the release tarball is not an acceptable gzip stream");
+            if (compressed[2] !== 8) refuse("the release tarball is not an acceptable gzip stream");
+            if (compressed[3] !== 0) refuse("the gzip header carries optional or reserved flags npm-pack never writes");
+            const xfl = compressed[8];
+            if (xfl !== 0 && xfl !== 2 && xfl !== 4) refuse("the gzip header carries an unknown XFL value");
+
+            const start = 10;
+            const footer = compressed.length - 8;
+            if (footer - start < 2) refuse("the release tarball is not an acceptable gzip stream");
+
+            let low = 1;
+            let high = footer - start;
+            let consumed = -1;
+            let output = null;
+            while (low <= high) {
+              const mid = low + Math.floor((high - low) / 2);
+              const outcome = inflateProbe(compressed.subarray(start, start + mid));
+              if (outcome.ok) {
+                consumed = mid;
+                output = outcome.output;
+                high = mid - 1;
+              } else {
+                low = mid + 1;
+              }
+            }
+            if (consumed === -1) refuse("the deflate payload is truncated or corrupt");
+            if (consumed !== footer - start) {
+              refuse("the gzip stream carries trailing bytes after its deflate payload");
+            }
+
+            const declaredCrc =
+              compressed[footer] | (compressed[footer + 1] << 8) | (compressed[footer + 2] << 16) | (compressed[footer + 3] << 24);
+            const declaredSize =
+              compressed[footer + 4] |
+              (compressed[footer + 5] << 8) |
+              (compressed[footer + 6] << 16) |
+              (compressed[footer + 7] << 24);
+            if ((declaredCrc >>> 0) !== crc32(output)) refuse("the gzip CRC32 footer does not match the decompressed data");
+            if ((declaredSize >>> 0) !== (output.length >>> 0)) {
+              refuse("the gzip ISIZE footer does not match the decompressed length");
+            }
+            return output;
+          }
+
+          function inspectArchive(gzipBuffer, expectedVersion, expectedPackage) {
+            const archive = gunzipSingleMember(gzipBuffer);
+            if (archive.length === 0) refuse("the release tarball expands to nothing");
+            if (archive.length % 512 !== 0) refuse("the archive is not a whole number of 512-byte blocks");
+
+            const members = [];
+            const seen = new Set();
+            let offset = 0;
+            let total = 0;
+            let terminated = false;
+
+            while (offset < archive.length) {
+              const header = archive.subarray(offset, offset + 512);
+              if (isZero(header)) {
+                if (archive.length - offset < 1024) refuse("the archive ends with a single zero block");
+                if (!isZero(archive.subarray(offset))) refuse("the archive has non-zero bytes after its terminator");
+                terminated = true;
+                offset = archive.length;
+                break;
+              }
+
+              let magicOk = true;
+              for (let index = 0; index < USTAR_MAGIC.length; index += 1) {
+                if (header[257 + index] !== USTAR_MAGIC[index]) magicOk = false;
+              }
+              if (!magicOk) refuse("the archive is not in the strict POSIX ustar format npm produces");
+
+              let checksum = 0;
+              for (let index = 0; index < 512; index += 1) {
+                checksum += index >= 148 && index < 156 ? 0x20 : header[index];
+              }
+              if (readNumeric(header, 148, 8, "header checksum", { zeroOk: false }) !== checksum) {
+                refuse("the archive header checksum does not match");
+              }
+
+              readNumeric(header, 100, 8, "mode", { zeroOk: false, max: 0o7777 });
+              readNumeric(header, 108, 8, "uid", { zeroOk: true });
+              readNumeric(header, 116, 8, "gid", { zeroOk: true });
+              const size = readNumeric(header, 124, 12, "size", { zeroOk: false });
+              readNumeric(header, 136, 12, "mtime", { zeroOk: false });
+              readNumeric(header, 329, 8, "device major", { zeroOk: true });
+              readNumeric(header, 337, 8, "device minor", { zeroOk: true });
+
+              const typeByte = header[156];
+              const isDirectory = typeByte === 53;
+              const isRegular = typeByte === 48 || typeByte === NUL;
+              if (!isRegular && !isDirectory) refuseType(typeByte);
+              if (isDirectory && size !== 0) refuse("the archive contains a directory member with a body");
+              if (!isZero(header.subarray(157, 257))) refuse("the archive contains a link entry");
+              if (!isZero(header.subarray(345, 500))) refuse("the archive uses a ustar prefix field");
+
+              const name = readName(header);
+              const key = canonicalMemberName(name, isDirectory);
+              if (size > LIMITS.memberMax) refuse("a member exceeds the accepted size bound");
+              if (members.length + 1 > LIMITS.membersMax) refuse("the archive has more members than accepted");
+              total += size;
+              if (total > LIMITS.totalMax) refuse("the members exceed the accepted total size bound");
+              if (seen.has(key)) refuse("the archive contains a duplicate member name: " + key);
+              seen.add(key);
+
+              const dataStart = offset + 512;
+              const dataEnd = dataStart + size;
+              if (dataEnd > archive.length) refuse("the archive is truncated inside a member");
+              const blockEnd = dataEnd + ((512 - (size % 512)) % 512);
+              if (blockEnd > archive.length) refuse("the archive is truncated inside the padding");
+              if (!isZero(archive.subarray(dataEnd, blockEnd))) refuse("the member padding is not zero");
+
+              members.push({ key: key, name: name, isDirectory: isDirectory, size: size, dataStart: dataStart });
+              offset = blockEnd;
+            }
+
+            if (!terminated) refuse("the archive ends without a two-block terminator");
+            if (members.length === 0) refuse("the archive holds no members");
+
+            const manifests = members.filter(function (member) {
+              return !member.isDirectory && member.name === "package/package.json";
+            });
+            if (manifests.length !== 1) {
+              refuse("expected exactly one package/package.json, found " + manifests.length);
+            }
+            const manifest = manifests[0];
+            if (manifest.size <= 0 || manifest.size > LIMITS.manifestMax) {
+              refuse("package/package.json is outside the accepted size bound");
+            }
+
+            let pkg;
+            try {
+              pkg = JSON.parse(
+                decodeUtf8(archive.subarray(manifest.dataStart, manifest.dataStart + manifest.size), "package/package.json"),
+              );
+            } catch (error) {
+              if (error instanceof Refusal) throw error;
+              refuse("package/package.json is not valid JSON");
+            }
+            assertManifest(pkg, expectedVersion, expectedPackage);
+            return members.length;
+          }
+
+          function assertManifest(pkg, expectedVersion, expectedPackage) {
+            if (!pkg || typeof pkg !== "object" || Array.isArray(pkg)) refuse("package/package.json is not a JSON object");
+            if (pkg.name !== expectedPackage) refuse("package name mismatch: " + String(pkg.name));
+            if (pkg.version !== expectedVersion) refuse("package version does not match the release tag: " + String(pkg.version));
+            const repository = pkg.repository;
+            if (!repository || typeof repository !== "object" || Array.isArray(repository)) {
+              refuse("repository must be a full object, not a bare URL string");
+            }
+            if (repository.type !== "git") refuse('repository.type must be exactly "git"');
+            if (repository.url !== REPOSITORY_URL) refuse("repository.url must be exactly " + REPOSITORY_URL);
+            if (pkg.homepage !== HOMEPAGE_URL) refuse("homepage must be exactly " + HOMEPAGE_URL);
+            if (!pkg.bugs || typeof pkg.bugs !== "object" || pkg.bugs.url !== BUGS_URL) {
+              refuse("bugs.url must be exactly " + BUGS_URL);
+            }
+            const publishConfig = pkg.publishConfig;
+            if (!publishConfig || typeof publishConfig !== "object" || Array.isArray(publishConfig)) {
+              refuse("publishConfig is missing");
+            }
+            if (Object.keys(publishConfig).sort().join(",") !== "access,registry,tag") {
+              refuse("publishConfig must hold exactly registry, access, and tag");
+            }
+            if (publishConfig.registry !== REGISTRY_URL) refuse("publishConfig.registry must be exactly " + REGISTRY_URL);
+            if (publishConfig.access !== "public") refuse('publishConfig.access must be exactly "public"');
+            if (publishConfig.tag !== "latest") refuse('publishConfig.tag must be exactly "latest"');
+            if (!pkg.bin || typeof pkg.bin !== "object" || Array.isArray(pkg.bin)) refuse("bin must be an object");
+            const binNames = Object.keys(pkg.bin);
+            if (binNames.length !== 1 || binNames[0] !== "skill-router") {
+              refuse('bin must declare exactly the entry "skill-router"');
+            }
+            const binTarget = pkg.bin["skill-router"];
+            if (typeof binTarget !== "string" || binTarget.startsWith("/") || binTarget.split("/").indexOf("..") !== -1) {
+              refuse("the bin target must be a safe relative path");
+            }
+            const scripts = pkg.scripts === undefined ? {} : pkg.scripts;
+            if (!scripts || typeof scripts !== "object" || Array.isArray(scripts)) refuse("scripts must be an object when present");
+            for (const forbidden of FORBIDDEN_SCRIPTS) {
+              if (Object.prototype.hasOwnProperty.call(scripts, forbidden)) {
+                refuse("the staged package must not carry the lifecycle script: " + forbidden);
+              }
+            }
+          }
+
+          function requireDigits(value, label) {
+            if (!/^[0-9]+$/.test(value)) refuse(label + " must be a plain integer");
+            if (value.length > 10) refuse(label + " is outside the accepted bound");
+            return Number.parseInt(value, 10);
+          }
+
+          function requireHex(value, label) {
+            if (!HEX_64.test(value)) refuse(label + " must be 64 lowercase hex characters");
+            return value;
+          }
+
+          function requireMode(value, label) {
+            if (!/^[0-7]{3,4}$/.test(value)) refuse(label + " must be an octal permission string");
+            return value;
+          }
+
+          function requirePlain(value, label) {
+            if (!PLAIN_NAME.test(value)) refuse(label + " must be a plain file name");
+            return value;
+          }
+
+          function compareRemote(tarball, sums) {
+            const tarballBytes = requireDigits(readEnv("REMOTE_TARBALL_SIZE", true), "the recorded tarball size");
+            const sumsBytes = requireDigits(readEnv("REMOTE_SUMS_SIZE", true), "the recorded SHA256SUMS size");
+            if (tarballBytes < LIMITS.remoteTarballMin || tarballBytes > LIMITS.remoteTarballMax) {
+              refuse("the release tarball size is outside the accepted bound");
+            }
+            if (sumsBytes < LIMITS.remoteSumsMin || sumsBytes > LIMITS.remoteSumsMax) {
+              refuse("the release SHA256SUMS size is outside the accepted bound");
+            }
+            if (tarballBytes !== tarball.size) refuse("the downloaded tarball size does not match the release asset");
+            if (sumsBytes !== sums.size) refuse("the downloaded SHA256SUMS size does not match the release asset");
+
+            const remoteTarballDigest = readEnv("REMOTE_TARBALL_DIGEST", false);
+            const remoteSumsDigest = readEnv("REMOTE_SUMS_DIGEST", false);
+            if (remoteTarballDigest) {
+              if (!/^sha256:[0-9a-f]{64}$/.test(remoteTarballDigest)) refuse("the recorded tarball digest is malformed");
+              if (remoteTarballDigest !== "sha256:" + tarball.sha256) {
+                refuse("the release asset digest does not match the downloaded tarball");
+              }
+            }
+            if (remoteSumsDigest) {
+              if (!/^sha256:[0-9a-f]{64}$/.test(remoteSumsDigest)) refuse("the recorded SHA256SUMS digest is malformed");
+              if (remoteSumsDigest !== "sha256:" + sums.sha256) refuse("the release asset digest does not match SHA256SUMS");
+            }
+          }
+
+          function compareRecorded(tarball, sums) {
+            const recordedName = requirePlain(readEnv("EXPECTED_TARBALL_NAME", true), "the recorded tarball name");
+            const tarballSize = requireDigits(readEnv("EXPECTED_TARBALL_SIZE", true), "the recorded tarball size");
+            const sumsSize = requireDigits(readEnv("EXPECTED_SUMS_SIZE", true), "the recorded SHA256SUMS size");
+            const tarballSha = requireHex(readEnv("EXPECTED_TARBALL_SHA256", true), "the recorded tarball digest");
+            const sumsSha = requireHex(readEnv("EXPECTED_SUMS_SHA256", true), "the recorded SHA256SUMS digest");
+            const tarballMode = requireMode(readEnv("EXPECTED_TARBALL_MODE", true), "the recorded tarball mode");
+            const sumsMode = requireMode(readEnv("EXPECTED_SUMS_MODE", true), "the recorded SHA256SUMS mode");
+            if (tarballSize !== tarball.size) refuse("the tarball size drifted since it was verified");
+            if (sumsSize !== sums.size) refuse("the SHA256SUMS size drifted since it was verified");
+            if (tarballSha !== tarball.sha256) refuse("the tarball digest drifted since it was verified");
+            if (sumsSha !== sums.sha256) refuse("the SHA256SUMS digest drifted since it was verified");
+            if (tarballMode !== tarball.mode) refuse("the tarball mode drifted since it was verified");
+            if (sumsMode !== sums.mode) refuse("the SHA256SUMS mode drifted since it was verified");
+            return recordedName;
+          }
+
+          function writeOutputs(values) {
+            const target = process.env.GITHUB_OUTPUT;
+            if (!target) return;
+            let text = "";
+            for (const key of Object.keys(values)) {
+              if (!/^[a-z][a-z0-9_]*$/.test(key)) refuse("refusing to write an unsafe output name");
+              const value = String(values[key]);
+              if (value.indexOf(String.fromCharCode(10)) !== -1 || value.indexOf(String.fromCharCode(13)) !== -1) {
+                refuse("refusing to write a multi-line output value");
+              }
+              text += key + "=" + value + String.fromCharCode(10);
+            }
+            fs.appendFileSync(target, text);
+          }
+
+          function main() {
+            const mode = process.argv[2];
+            if (mode !== "verify" && mode !== "reverify") refuse("unknown verifier mode");
+
+            const tarballPath = readEnv("TARBALL_PATH", true);
+            const sumsPath = readEnv("SUMS_PATH", true);
+            const expectedName = requirePlain(readEnv("EXPECTED_TARBALL_NAME", true), "the expected tarball name");
+            const expectedVersion = readEnv("EXPECTED_VERSION", true);
+            const expectedPackage = readEnv("EXPECTED_PACKAGE_NAME", true);
+            if (path.basename(tarballPath) !== expectedName) refuse("the tarball on disk is not the expected release asset");
+
+            const tarball = readStableFile(tarballPath, LIMITS.tarballMax, "the release tarball");
+            const sums = readStableFile(sumsPath, LIMITS.sumsMax, "SHA256SUMS");
+
+            const digest = parseChecksums(sums.buffer, expectedName);
+            if (digest !== tarball.sha256) refuse("SHA256SUMS does not match the release tarball digest");
+
+            if (mode === "verify") {
+              compareRemote(tarball, sums);
+            } else {
+              const recordedName = compareRecorded(tarball, sums);
+              if (recordedName !== expectedName) refuse("the recorded tarball name does not match");
+            }
+
+            const members = inspectArchive(tarball.buffer, expectedVersion, expectedPackage);
+
+            if (mode === "verify") {
+              writeOutputs({
+                tarball_name: expectedName,
+                tarball_size: String(tarball.size),
+                tarball_sha256: tarball.sha256,
+                tarball_mode: tarball.mode,
+                sums_size: String(sums.size),
+                sums_sha256: sums.sha256,
+                sums_mode: sums.mode,
+                package_version: expectedVersion,
+                package_name: expectedPackage,
+              });
+            }
+
+            process.stdout.write(
+              "publish-npm: " + mode + " ok | package " + expectedPackage + "@" + expectedVersion +
+                " | tarball " + expectedName + " " + tarball.size + " bytes sha256 " + tarball.sha256 +
+                " mode " + tarball.mode + " | SHA256SUMS " + sums.size + " bytes sha256 " + sums.sha256 +
+                " mode " + sums.mode + " | members " + members + String.fromCharCode(10),
+            );
+          }
+
+          try {
+            main();
+          } catch (error) {
+            const message = error instanceof Refusal ? error.message : String(error && error.stack ? error.stack : error);
+            process.stderr.write("publish-npm: " + message + String.fromCharCode(10));
+            process.exitCode = 1;
+          }
+          PUBLISH_NPM_VERIFY_EOF
+
+          TARBALL_PATH="$PWD/$tarball" \
+          SUMS_PATH="$PWD/release-assets/SHA256SUMS" \
+          EXPECTED_TARBALL_NAME="$expected_name" \
+          EXPECTED_VERSION="$version" \
+          EXPECTED_PACKAGE_NAME="$package_name" \
+          REMOTE_TARBALL_SIZE="$REMOTE_TARBALL_SIZE" \
+          REMOTE_TARBALL_DIGEST="$REMOTE_TARBALL_DIGEST" \
+          REMOTE_SUMS_SIZE="$REMOTE_SUMS_SIZE" \
+          REMOTE_SUMS_DIGEST="$REMOTE_SUMS_DIGEST" \
+            node "$VERIFY_SCRIPT" verify
+
+      - name: Recheck the verified bundle and stage it on npm
+        id: stage
+        env:
+          TARBALL_NAME: ${{ steps.verify.outputs.tarball_name }}
+          TARBALL_SIZE: ${{ steps.verify.outputs.tarball_size }}
+          TARBALL_SHA256: ${{ steps.verify.outputs.tarball_sha256 }}
+          TARBALL_MODE: ${{ steps.verify.outputs.tarball_mode }}
+          SUMS_SIZE: ${{ steps.verify.outputs.sums_size }}
+          SUMS_SHA256: ${{ steps.verify.outputs.sums_sha256 }}
+          SUMS_MODE: ${{ steps.verify.outputs.sums_mode }}
+          PACKAGE_VERSION: ${{ steps.verify.outputs.package_version }}
+          PACKAGE_NAME: ${{ steps.verify.outputs.package_name }}
+        run: |
+          set -euo pipefail
+
+          # Shape-check every value the verify step recorded before any of it
+          # is used, so a malformed output cannot reach a comparison or a path.
+          case "$TARBALL_NAME" in
+            ""|*[!0-9A-Za-z._~+-]*)
+              echo "refusing an unsafe recorded asset name" >&2
+              exit 1
+              ;;
+          esac
+          case "$TARBALL_SIZE" in
+            ""|*[!0-9]*)
+              echo "the recorded tarball size must be a plain integer" >&2
+              exit 1
+              ;;
+          esac
+          case "$SUMS_SIZE" in
+            ""|*[!0-9]*)
+              echo "the recorded checksum size must be a plain integer" >&2
+              exit 1
+              ;;
+          esac
+          case "$TARBALL_SHA256" in
+            ""|*[!0-9a-f]*)
+              echo "the recorded tarball digest must be lowercase hexadecimal" >&2
+              exit 1
+              ;;
+          esac
+          case "$SUMS_SHA256" in
+            ""|*[!0-9a-f]*)
+              echo "the recorded checksum digest must be lowercase hexadecimal" >&2
+              exit 1
+              ;;
+          esac
+          if [ "${#TARBALL_SHA256}" -ne 64 ] || [ "${#SUMS_SHA256}" -ne 64 ]; then
+            echo "the recorded digests must be 64 characters long" >&2
+            exit 1
+          fi
+          case "$TARBALL_MODE" in
+            ""|*[!0-7]*)
+              echo "the recorded tarball mode must be octal" >&2
+              exit 1
+              ;;
+          esac
+          case "$SUMS_MODE" in
+            ""|*[!0-7]*)
+              echo "the recorded checksum mode must be octal" >&2
+              exit 1
+              ;;
+          esac
+          case "$PACKAGE_VERSION" in
+            ""|*[!0-9.]*)
+              echo "the recorded package version must be numeric" >&2
+              exit 1
+              ;;
+          esac
+          case "$PACKAGE_NAME" in
+            "@openagency/skill-router")
+              ;;
+            *)
+              echo "refusing an unexpected recorded package name" >&2
+              exit 1
+              ;;
+          esac
+
+          # Exactly the two verified files, again — re-derived from the files
+          # themselves, never from a stored name alone.
+          shopt -s nullglob dotglob
+          entries=(release-assets/*)
+          if [ "${#entries[@]}" -ne 2 ]; then
+            echo "expected exactly two release assets, found ${#entries[@]}" >&2
+            for found in ${entries[@]+"${entries[@]}"}; do
+              printf '  %s\n' "$found" >&2
+            done
+            exit 1
+          fi
+          tarballs=(release-assets/*.tgz)
+          if [ "${#tarballs[@]}" -ne 1 ]; then
+            echo "expected exactly one release tarball, found ${#tarballs[@]}" >&2
+            exit 1
+          fi
+          tarball=${tarballs[0]}
+          if [ -L "$tarball" ] || [ -L release-assets/SHA256SUMS ] || [ ! -f "$tarball" ] || [ ! -f release-assets/SHA256SUMS ]; then
+            echo "both release assets must be regular files, never links" >&2
+            exit 1
+          fi
+          if [ "$(basename "$tarball")" != "$TARBALL_NAME" ]; then
+            echo "tarball name mismatch: $(basename "$tarball") != $TARBALL_NAME" >&2
+            exit 1
+          fi
+
+          # The strict verifier written by the verify step performs exactly
+          # the same validation again, immediately before staging: it re-reads
+          # both files by descriptor (identity, size, mode, link count), re-
+          # parses SHA256SUMS against the expected name, re-hashes the
+          # tarball, re-checks every recorded identity, and re-inspects the
+          # archive and its manifest — all in memory, with no extraction and
+          # no path taken from the checksum file.
+          VERIFY_SCRIPT=.phase12-publish-verify.cjs
+          if [ ! -f "$VERIFY_SCRIPT" ] || [ -L "$VERIFY_SCRIPT" ]; then
+            echo "the strict verifier written by the verify step is missing" >&2
+            exit 1
+          fi
+
+          TARBALL_PATH="$PWD/release-assets/$TARBALL_NAME" \
+          SUMS_PATH="$PWD/release-assets/SHA256SUMS" \
+          EXPECTED_TARBALL_NAME="$TARBALL_NAME" \
+          EXPECTED_VERSION="$PACKAGE_VERSION" \
+          EXPECTED_PACKAGE_NAME="$PACKAGE_NAME" \
+          EXPECTED_TARBALL_SIZE="$TARBALL_SIZE" \
+          EXPECTED_TARBALL_SHA256="$TARBALL_SHA256" \
+          EXPECTED_TARBALL_MODE="$TARBALL_MODE" \
+          EXPECTED_SUMS_SIZE="$SUMS_SIZE" \
+          EXPECTED_SUMS_SHA256="$SUMS_SHA256" \
+          EXPECTED_SUMS_MODE="$SUMS_MODE" \
+            node "$VERIFY_SCRIPT" reverify
+
+          # OIDC trusted publishing: no npm token, no OTP, no auth flag, no
+          # `--provenance` either — npm attaches provenance automatically for
+          # an OIDC-verified identity. Staging defers proof-of-presence, so
+          # approving the staged version remains a manual 2FA action for an
+          # npm maintainer and never happens here.
+          npm stage publish "./release-assets/${TARBALL_NAME}" --access public --tag latest --ignore-scripts

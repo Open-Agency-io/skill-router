@@ -1,0 +1,151 @@
+{
+  "schemaVersion": 1,
+  "description": "Stable container harness matrix for skill-router. Pinned harness packages, digest-pinned base image, image/target mapping, per-harness secret allowlists (Claude cases take only CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token`; OpenCode cases take provider API keys and never the Claude OAuth token), and the case list. Phase 1 implements build/smoke; every case below is executed by the Phase 2 case runner, one fresh `docker run --rm` per case.",
+  "baseImage": "node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392",
+  "baseImageTag": "node:22-bookworm-slim",
+  "baseImageDigestNote": "Multi-architecture index digest obtained with `docker buildx imagetools inspect node:22-bookworm-slim` on 2026-10-06; re-verify with the same command before trusting a refresh.",
+  "imagePrefix": "skill-router/harness",
+  "providerKeyMap": {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY",
+    "mistral": "MISTRAL_API_KEY",
+    "groq": "GROQ_API_KEY",
+    "xai": "XAI_API_KEY",
+    "together": "TOGETHER_API_KEY"
+  },
+  "secretEnvAllowlist": [
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "OPENROUTER_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "MISTRAL_API_KEY",
+    "GROQ_API_KEY",
+    "XAI_API_KEY",
+    "TOGETHER_API_KEY",
+    "CLAUDE_CODE_OAUTH_TOKEN"
+  ],
+  "harnesses": {
+    "opencode-v1": {
+      "displayName": "OpenCode 1.x",
+      "package": "opencode-ai",
+      "version": "1.18.34",
+      "versionEnv": "SKILL_ROUTER_OPENCODE_V1_VERSION",
+      "binary": "opencode",
+      "major": 1,
+      "dockerTarget": "opencode-v1",
+      "secretAllowlist": [
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY",
+        "OPENROUTER_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "MISTRAL_API_KEY",
+        "GROQ_API_KEY",
+        "XAI_API_KEY",
+        "TOGETHER_API_KEY"
+      ],
+      "runtimeEnv": {
+        "OPENCODE_DISABLE_AUTOUPDATE": "1",
+        "OPENCODE_DISABLE_LSP_DOWNLOAD": "1"
+      },
+      "ripgrep": {
+        "package": "ripgrep",
+        "version": "13.0.0-4+b2",
+        "major": 13,
+        "binary": "/usr/bin/rg",
+        "scope": "target-only",
+        "pinSource": "apt-cache policy ripgrep inside node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392 for linux/amd64 and linux/arm64 (2026-10-07)",
+        "why": "OpenCode 1.x Skill tool enumerates companion files via Ripgrep.Service.find; its binary resolver otherwise downloads rg into Global.Path.bin, which noexec tmpfs storage can never execute"
+      }
+    },
+    "opencode-v2": {
+      "displayName": "OpenCode 2.x (@opencode/cli)",
+      "package": "@opencode/cli",
+      "version": "2.0.24",
+      "versionEnv": "SKILL_ROUTER_OPENCODE_V2_VERSION",
+      "binary": "opencode",
+      "major": 2,
+      "dockerTarget": "opencode-v2",
+      "secretAllowlist": [
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY",
+        "OPENROUTER_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "MISTRAL_API_KEY",
+        "GROQ_API_KEY",
+        "XAI_API_KEY",
+        "TOGETHER_API_KEY"
+      ],
+      "runtimeEnv": {
+        "OPENCODE_DISABLE_AUTOUPDATE": "1"
+      }
+    },
+    "claude": {
+      "displayName": "Claude Code",
+      "package": "@anthropic-ai/claude-code",
+      "version": "2.1.291",
+      "versionEnv": "SKILL_ROUTER_CLAUDE_CODE_VERSION",
+      "binary": "claude",
+      "major": 2,
+      "dockerTarget": "claude",
+      "secretAllowlist": [
+        "CLAUDE_CODE_OAUTH_TOKEN"
+      ],
+      "runtimeEnv": {
+        "DISABLE_AUTOUPDATER": "1",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
+      }
+    }
+  },
+  "cases": [
+    {
+      "id": "opencode-v1-select",
+      "harness": "opencode-v1",
+      "scenario": "select",
+      "phase": 2
+    },
+    {
+      "id": "opencode-v1-none",
+      "harness": "opencode-v1",
+      "scenario": "none",
+      "phase": 2
+    },
+    {
+      "id": "opencode-v2-select",
+      "harness": "opencode-v2",
+      "scenario": "select",
+      "phase": 2
+    },
+    {
+      "id": "opencode-v2-none",
+      "harness": "opencode-v2",
+      "scenario": "none",
+      "phase": 2
+    },
+    {
+      "id": "claude-control",
+      "harness": "claude",
+      "scenario": "control",
+      "phase": 2
+    },
+    {
+      "id": "claude-select",
+      "harness": "claude",
+      "scenario": "select",
+      "phase": 2
+    },
+    {
+      "id": "claude-none",
+      "harness": "claude",
+      "scenario": "none",
+      "phase": 2
+    }
+  ]
+}

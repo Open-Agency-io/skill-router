@@ -1,0 +1,78 @@
+[
+  {
+    "type": "text",
+    "sessionID": "ses_fixturev2patchselect",
+    "part": {
+      "type": "text",
+      "text": "Loading skill-router for the release request."
+    }
+  },
+  {
+    "type": "tool_use",
+    "sessionID": "ses_fixturev2patchselect",
+    "part": {
+      "type": "tool",
+      "tool": "skill",
+      "state": {
+        "status": "completed",
+        "input": {
+          "id": "skill-router"
+        },
+        "output": "router instructions loaded"
+      }
+    }
+  },
+  {
+    "type": "tool_use",
+    "sessionID": "ses_fixturev2patchselect",
+    "part": {
+      "type": "tool",
+      "tool": "patch",
+      "state": {
+        "status": "completed",
+        "input": {
+          "patchText": "*** Begin Patch\n*** Add File: /workspace/project/.skill-router-requests/0123456789abcdef0123456789abcdef.txt\n+prepare and publish a release\n*** End Patch"
+        },
+        "output": "Success. Updated the following files:\nA /workspace/project/.skill-router-requests/0123456789abcdef0123456789abcdef.txt"
+      }
+    }
+  },
+  {
+    "type": "tool_use",
+    "sessionID": "ses_fixturev2patchselect",
+    "part": {
+      "type": "tool",
+      "tool": "shell",
+      "state": {
+        "status": "completed",
+        "input": {
+          "command": "skill-router route --json --root . --request-token 0123456789abcdef0123456789abcdef"
+        },
+        "output": "{\"outcome\":\"select\",\"skillId\":\"release\"}"
+      }
+    }
+  },
+  {
+    "type": "tool_use",
+    "sessionID": "ses_fixturev2patchselect",
+    "part": {
+      "type": "tool",
+      "tool": "skill",
+      "state": {
+        "status": "completed",
+        "input": {
+          "id": "release"
+        },
+        "output": "release instructions loaded"
+      }
+    }
+  },
+  {
+    "type": "text",
+    "sessionID": "ses_fixturev2patchselect",
+    "part": {
+      "type": "text",
+      "text": "Release notes are ready. RELEASE_SKILL_LOADED"
+    }
+  }
+]

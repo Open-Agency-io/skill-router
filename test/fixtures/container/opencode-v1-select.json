@@ -1,0 +1,79 @@
+[
+  {
+    "type": "text",
+    "sessionID": "ses_fixtureopencodev1",
+    "part": {
+      "type": "text",
+      "text": "Loading skill-router for the release request."
+    }
+  },
+  {
+    "type": "tool_use",
+    "sessionID": "ses_fixtureopencodev1",
+    "part": {
+      "type": "tool",
+      "tool": "skill",
+      "state": {
+        "status": "completed",
+        "input": {
+          "name": "skill-router"
+        },
+        "output": "router instructions loaded"
+      }
+    }
+  },
+  {
+    "type": "tool_use",
+    "sessionID": "ses_fixtureopencodev1",
+    "part": {
+      "type": "tool",
+      "tool": "write",
+      "state": {
+        "status": "completed",
+        "input": {
+          "path": "/workspace/project/.skill-router-requests/aabbccddeeff00112233445566778899.txt",
+          "content": "prepare and publish a release"
+        },
+        "output": "request written"
+      }
+    }
+  },
+  {
+    "type": "tool_use",
+    "sessionID": "ses_fixtureopencodev1",
+    "part": {
+      "type": "tool",
+      "tool": "shell",
+      "state": {
+        "status": "completed",
+        "input": {
+          "command": "skill-router route --json --root . --request-token aabbccddeeff00112233445566778899"
+        },
+        "output": "{\"outcome\":\"select\",\"skillId\":\"release\"}"
+      }
+    }
+  },
+  {
+    "type": "tool_use",
+    "sessionID": "ses_fixtureopencodev1",
+    "part": {
+      "type": "tool",
+      "tool": "skill",
+      "state": {
+        "status": "completed",
+        "input": {
+          "name": "release"
+        },
+        "output": "release instructions loaded"
+      }
+    }
+  },
+  {
+    "type": "text",
+    "sessionID": "ses_fixtureopencodev1",
+    "part": {
+      "type": "text",
+      "text": "Preparing the release notes now. RELEASE_SKILL_LOADED"
+    }
+  }
+]

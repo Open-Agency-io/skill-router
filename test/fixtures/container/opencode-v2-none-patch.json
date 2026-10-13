@@ -1,0 +1,63 @@
+[
+  {
+    "type": "text",
+    "sessionID": "ses_fixturev2patchnone",
+    "part": {
+      "type": "text",
+      "text": "Loading skill-router for the unrelated request."
+    }
+  },
+  {
+    "type": "tool_use",
+    "sessionID": "ses_fixturev2patchnone",
+    "part": {
+      "type": "tool",
+      "tool": "skill",
+      "state": {
+        "status": "completed",
+        "input": {
+          "id": "skill-router"
+        },
+        "output": "router instructions loaded"
+      }
+    }
+  },
+  {
+    "type": "tool_use",
+    "sessionID": "ses_fixturev2patchnone",
+    "part": {
+      "type": "tool",
+      "tool": "patch",
+      "state": {
+        "status": "completed",
+        "input": {
+          "patchText": "*** Begin Patch\n*** Add File: /workspace/project/.skill-router-requests/ffeeddccbbaa99887766554433221100.txt\n+calculate orbital velocity\n*** End Patch"
+        },
+        "output": "Success. Updated the following files:\nA /workspace/project/.skill-router-requests/ffeeddccbbaa99887766554433221100.txt"
+      }
+    }
+  },
+  {
+    "type": "tool_use",
+    "sessionID": "ses_fixturev2patchnone",
+    "part": {
+      "type": "tool",
+      "tool": "shell",
+      "state": {
+        "status": "completed",
+        "input": {
+          "command": "skill-router route --json --root . --request-token ffeeddccbbaa99887766554433221100"
+        },
+        "output": "{\"outcome\":\"none\"}"
+      }
+    }
+  },
+  {
+    "type": "text",
+    "sessionID": "ses_fixturev2patchnone",
+    "part": {
+      "type": "text",
+      "text": "No specialized skill matched; continuing with the request."
+    }
+  }
+]

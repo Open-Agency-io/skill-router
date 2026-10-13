@@ -1,0 +1,78 @@
+[
+  {
+    "type": "text",
+    "sessionID": "ses_fixturev2metadata",
+    "part": {
+      "type": "text",
+      "text": "Loading skill-router for the unrelated request."
+    }
+  },
+  {
+    "type": "tool_use",
+    "sessionID": "ses_fixturev2metadata",
+    "part": {
+      "type": "tool",
+      "tool": "skill",
+      "state": {
+        "status": "completed",
+        "input": {
+          "id": "skill-router"
+        },
+        "output": "router instructions loaded"
+      }
+    }
+  },
+  {
+    "type": "tool_use",
+    "sessionID": "ses_fixturev2metadata",
+    "part": {
+      "type": "tool",
+      "tool": "write",
+      "state": {
+        "status": "completed",
+        "input": {
+          "filePath": "/workspace/project/.skill-router-requests/ffeeddccbbaa99887766554433221100.txt",
+          "content": "calculate orbital velocity"
+        },
+        "output": "request written"
+      }
+    }
+  },
+  {
+    "type": "tool_use",
+    "sessionID": "ses_fixturev2metadata",
+    "part": {
+      "type": "tool",
+      "tool": "shell",
+      "state": {
+        "status": "completed",
+        "input": {
+          "command": "skill-router route --json --root . --request-token ffeeddccbbaa99887766554433221100"
+        },
+        "output": "{\"outcome\":\"none\"}",
+        "metadata": {
+          "metadata": {
+            "exit": 0,
+            "truncated": false,
+            "status": "success"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"outcome\":\"none\"}"
+            }
+          ]
+        }
+      },
+      "toolCallID": "call_route_001"
+    }
+  },
+  {
+    "type": "text",
+    "sessionID": "ses_fixturev2metadata",
+    "part": {
+      "type": "text",
+      "text": "No specialized skill matched; continuing with the request."
+    }
+  }
+]

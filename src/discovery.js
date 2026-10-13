@@ -1,33 +1,50 @@
 import { createHash } from "node:crypto";
-import { lstat, readdir, readFile } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
 import path from "node:path";
+import { BOUNDED_WALK_SKIP_NAMES, boundedWalk, createWalkBudget, isBoundedWalkLimit, readBoundedFile } from "./bounded-walk.js";
 import { parseFrontmatter, skillMetadata } from "./frontmatter.js";
+import { classifyId } from "./identifiers.js";
 
-export const PORTABLE_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+// Compatibility re-export: identifiers.js owns the shared grammar.
+export { PORTABLE_ID } from "./identifiers.js";
 
-async function walkSkillFiles(root) {
+/** Detailed invalid-ID diagnostics per source; the rest collapse to one summary. */
+const MAX_INVALID_ID_SAMPLES = 20;
+const MAX_PATH_DISPLAY = 160;
+
+/**
+ * Bounded, control-safe rendering of a source-relative path for diagnostics.
+ * Control characters are replaced and long paths are truncated, so a hostile
+ * directory name can never inject terminal escapes or unbounded text.
+ */
+function displayPath(relative) {
+  const normalized = relative.split(path.sep).join("/").replace(/[\u0000-\u001f\u007f-\u009f]/g, "?");
+  return normalized.length > MAX_PATH_DISPLAY ? `${normalized.slice(0, MAX_PATH_DISPLAY)}...` : normalized;
+}
+
+/**
+ * Candidate skill files under one source directory, found with the shared
+ * bounded, no-follow walk: `.git` and `node_modules` subtrees are counted but
+ * never opened, symlinks and special files are silently skipped exactly as
+ * before (their diagnostics belong to later reads), and the traversal stops
+ * with a `BoundedWalkError` the moment any fixed limit is exceeded. Root-level
+ * `*.md` files and any `SKILL.md` are candidates; nothing is read here, so the
+ * caller can charge the candidate bodies against the same budget afterwards.
+ */
+async function walkSkillFiles(root, budget) {
   const files = [];
 
-  async function visit(directory, relativeDirectory = "") {
-    const entries = await readdir(directory, { withFileTypes: true });
-    entries.sort((a, b) => a.name.localeCompare(b.name));
-
-    for (const entry of entries) {
-      const absolute = path.join(directory, entry.name);
-      const relative = path.join(relativeDirectory, entry.name);
-      if (entry.isSymbolicLink()) continue;
-      if (entry.isDirectory()) {
-        await visit(absolute, relative);
-      } else if (
-        entry.isFile() &&
-        ((relativeDirectory === "" && entry.name.endsWith(".md")) || entry.name === "SKILL.md")
-      ) {
-        files.push({ absolute, relative });
+  await boundedWalk(root, {
+    budget,
+    skipNames: BOUNDED_WALK_SKIP_NAMES,
+    onFile: (entry) => {
+      const rootLevel = !entry.relative.includes("/");
+      if ((rootLevel && entry.name.endsWith(".md")) || entry.name === "SKILL.md") {
+        files.push({ absolute: entry.absolute, relative: entry.relative });
       }
-    }
-  }
+    },
+  });
 
-  await visit(root);
   return files;
 }
 
@@ -45,7 +62,18 @@ function diagnostic(level, code, message, details = {}) {
   return { level, code, message, ...details };
 }
 
-export async function discoverSource(source, sourceIndex = 0) {
+/**
+ * One skill source, fully inventoried or fully refused.
+ *
+ * A `BoundedWalkError` from the shared bounded traversal or from any candidate
+ * body read collapses the whole result to a single blocking `source-limit-exceeded`
+ * diagnostic (carrying only the stable reason enum, never a path) with no
+ * partial skill inventory and no partial candidate fingerprints.
+ *
+ * `options.limits` is a narrow test-only injection seam for the shared walk
+ * budget; production callers pass nothing and get the fixed defaults.
+ */
+export async function discoverSource(source, sourceIndex = 0, options = {}) {
   const root = path.resolve(source);
   const diagnostics = [];
   const skills = [];
@@ -77,40 +105,78 @@ export async function discoverSource(source, sourceIndex = 0) {
   }
 
   const directFile = stat.isFile();
-  fingerprintEntries.push({
+  const sourceEntry = {
     kind: "source",
     source: root,
     sourceIndex,
     status: directFile ? "file" : "directory",
-  });
+  };
+
+  // One budget spans the traversal and every candidate body read, so entries,
+  // per-file bytes, and aggregate bytes are all decided by one bounded view of
+  // the source. `options.limits` is a test-only injection seam; production
+  // callers pass nothing and run on the fixed shared defaults.
+  const budget = createWalkBudget(options.limits);
+  let inventory;
+  try {
+    inventory = await collectSourceInventory(root, sourceIndex, directFile, budget);
+  } catch (error) {
+    if (!isBoundedWalkLimit(error)) throw error;
+    // A bound failure blocks the whole source: no partial skill inventory and
+    // no partial candidate fingerprints survive it — exactly one coded,
+    // path-free diagnostic and the source entry itself.
+    return {
+      root,
+      skills: [],
+      fingerprintEntries: [sourceEntry],
+      diagnostics: [
+        diagnostic(
+          "error",
+          "source-limit-exceeded",
+          `Skill source exceeds the supported size limits (reason: ${error.reason})`,
+          { reason: error.reason },
+        ),
+      ],
+    };
+  }
+
+  return {
+    root,
+    skills: inventory.skills,
+    diagnostics: inventory.diagnostics,
+    fingerprintEntries: [sourceEntry, ...inventory.fingerprintEntries],
+  };
+}
+
+/**
+ * The bounded candidate loop behind `discoverSource`. Throws any
+ * `BoundedWalkError` upward — including one raised by a candidate body read —
+ * so the caller can drop everything collected here and report the single
+ * blocking diagnostic instead of a partial inventory.
+ */
+async function collectSourceInventory(root, sourceIndex, directFile, budget) {
+  const diagnostics = [];
+  const skills = [];
+  const fingerprintEntries = [];
 
   const candidates = directFile
     ? [{ absolute: root, relative: path.basename(root) }]
-    : await walkSkillFiles(root);
+    : await walkSkillFiles(root, budget);
+
+  let invalidIdCount = 0;
 
   for (const file of candidates) {
     const id = deriveID(file.relative, directFile, file.absolute);
-    if (id === "SKILL" && file.relative === "SKILL.md" && !directFile) {
-      diagnostics.push(
-        diagnostic("warning", "root-skill-id", "A source-root SKILL.md has the literal ID SKILL", {
-          path: file.absolute,
-          id,
-        }),
-      );
-    }
-    if (!PORTABLE_ID.test(id) || id.length > 64) {
-      diagnostics.push(
-        diagnostic("warning", "non-portable-id", `Skill ID is not portable: ${id}`, {
-          path: file.absolute,
-          id,
-        }),
-      );
-    }
+    const problem = classifyId(id);
 
+    // Candidate freshness covers rejected files too: fixing or removing an
+    // invalid file must change the source fingerprint. The body is always
+    // read and hashed when readable, and parsing is always attempted.
     let text;
     let parsed;
+    let failure = null;
     try {
-      text = await readFile(file.absolute, "utf8");
+      text = (await readBoundedFile(file.absolute, budget)).toString("utf8");
       fingerprintEntries.push({
         kind: "candidate",
         source: root,
@@ -118,20 +184,56 @@ export async function discoverSource(source, sourceIndex = 0) {
         path: file.absolute,
         contentHash: createHash("sha256").update(text).digest("hex"),
       });
-      parsed = parseFrontmatter(text);
     } catch (error) {
-      if (text === undefined) {
-        fingerprintEntries.push({
-          kind: "candidate",
-          source: root,
-          sourceIndex,
-          path: file.absolute,
-          status: "unreadable",
-        });
+      // Only a bound failure aborts the source; every other read problem keeps
+      // the established bounded "unreadable candidate" treatment.
+      if (isBoundedWalkLimit(error)) throw error;
+      failure = "read";
+      fingerprintEntries.push({
+        kind: "candidate",
+        source: root,
+        sourceIndex,
+        path: file.absolute,
+        status: "unreadable",
+      });
+    }
+    if (failure === null) {
+      try {
+        parsed = parseFrontmatter(text);
+      } catch {
+        failure = "frontmatter";
       }
+    }
+
+    if (problem) {
+      // A derived ID that is not a portable public ID rejects the candidate
+      // outright — even when the body is unreadable or unparseable. Exactly
+      // one capped invalid-ID diagnostic describes it; no parallel parse
+      // error may leak the raw cause, the absolute path, or the ID.
+      invalidIdCount += 1;
+      if (invalidIdCount <= MAX_INVALID_ID_SAMPLES) {
+        diagnostics.push(
+          diagnostic(
+            "error",
+            "invalid-skill-id",
+            `Skill file was omitted: derived skill ID is not a portable public ID (reason: ${problem})`,
+            { reason: problem, path: displayPath(file.relative) },
+          ),
+        );
+      }
+      continue;
+    }
+
+    if (failure !== null) {
+      // A valid ID whose body cannot be loaded keeps the established error
+      // code, but its shape is fixed and bounded: a source-relative display
+      // path, a fixed reason code, and the (already validated, therefore
+      // bounded and control-free) ID — never the raw cause, errno, syscall
+      // text, absolute path, or file content.
       diagnostics.push(
-        diagnostic("error", "invalid-skill", `Cannot parse ${file.absolute}: ${error.message}`, {
-          path: file.absolute,
+        diagnostic("error", "invalid-skill", `Skill file cannot be loaded (reason: ${failure})`, {
+          reason: failure,
+          path: displayPath(file.relative),
           id,
         }),
       );
@@ -162,7 +264,18 @@ export async function discoverSource(source, sourceIndex = 0) {
     });
   }
 
-  return { root, skills, diagnostics, fingerprintEntries };
+  if (invalidIdCount > MAX_INVALID_ID_SAMPLES) {
+    diagnostics.push(
+      diagnostic(
+        "error",
+        "invalid-skill-id-overflow",
+        `Source omitted ${invalidIdCount} files with invalid skill IDs; only the first ${MAX_INVALID_ID_SAMPLES} are reported in detail`,
+        { suppressed: invalidIdCount - MAX_INVALID_ID_SAMPLES },
+      ),
+    );
+  }
+
+  return { skills, diagnostics, fingerprintEntries };
 }
 
 export async function discoverSources(sources) {
