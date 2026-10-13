@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { lstat, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, rename, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -374,11 +374,16 @@ test("a child swapped for a symlink or another directory in the open window is r
   assert.equal(JSON.stringify(symlinkResult.files).includes("secret"), false);
 
   // Swap to a *different real directory*: same type, different identity, so
-  // the identity pin refuses it (strong-identity filesystems only).
+  // the identity pin refuses it (strong-identity filesystems only). The old
+  // directory is renamed aside rather than deleted first: a filesystem with
+  // eager inode reuse (ext4 on the Linux runner) can hand the replacement
+  // directory the same dev/ino the deleted one just freed, which would make
+  // this swap indistinguishable from the original. Renaming keeps the old
+  // inode allocated, so the replacement provably differs on every platform.
   const replaced = await makeTree(t, { "a.md": "a\n", "z": { "inside.md": "inside\n" } });
   const other = await makeTree(t, { "other.md": "other\n" });
   const replaceResult = await swapAndWalk(replaced, path.join(replaced, "z"), async () => {
-    await rm(path.join(replaced, "z"), { recursive: true, force: true });
+    await rename(path.join(replaced, "z"), path.join(other, "z-original"));
     await mkdir(path.join(replaced, "z"), { recursive: true });
     await writeFile(path.join(replaced, "z", "other.md"), "other\n");
   });

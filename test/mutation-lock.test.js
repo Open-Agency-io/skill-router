@@ -776,7 +776,12 @@ test("failed setup preserves a lock directory swapped by someone else", async ()
                 if (from === paths.lockDirectory && !swapped) {
                   swapped = true;
                   const fsp = await import("node:fs/promises");
-                  await fsp.rm(paths.lockDirectory, { recursive: true, force: true });
+                  // Rename the original lock aside instead of deleting it: an
+                  // inode allocator with eager reuse (ext4 on the Linux
+                  // runner) can give the replacement directory the same
+                  // dev/ino the deleted one just freed, making the swap
+                  // invisible to the identity recheck.
+                  await fsp.rename(paths.lockDirectory, `${paths.lockDirectory}.pinned`);
                   await fsp.mkdir(paths.lockDirectory, { mode: 0o700 });
                   await writeFile(path.join(paths.lockDirectory, "foreign.txt"), "keep-me", { mode: 0o600 });
                 }
@@ -1270,12 +1275,18 @@ test("B1: release never recursively deletes a claim replaced after its verificat
           releaseFsyncs += 1;
           if (releaseFsyncs === 2) {
             // Replace the claim after its first verification and immediately
-            // before the recheck that guards the destructive removal.
+            // before the recheck that guards the destructive removal. The
+            // original claim is renamed aside rather than deleted: an inode
+            // allocator with eager reuse (ext4 on the Linux runner) can give
+            // the replacement directory the same dev/ino the deleted one just
+            // freed, which would make the swap invisible to the identity
+            // recheck. Renaming keeps that inode allocated, so the
+            // replacement provably differs on every platform.
             const entries = await readdir(paths.controlDirectory);
             const claim = entries.find((name) => name.startsWith(CLAIM_PREFIX));
             assert.ok(claim, "the release renamed the lock to a claim");
             swappedClaim = path.join(paths.controlDirectory, claim);
-            await rm(swappedClaim, { recursive: true, force: true });
+            await rename(swappedClaim, `${swappedClaim}.pinned`);
             await mkdir(swappedClaim, { recursive: true, mode: 0o700 });
             if (POSIX) await chmod(swappedClaim, 0o700);
             await writeFile(path.join(swappedClaim, "foreign.json"), "{}\n", { mode: 0o600 });
@@ -1330,12 +1341,18 @@ test("B1: reclamation never recursively deletes a claim replaced after its verif
           reclaimFsyncs += 1;
           if (reclaimFsyncs === 2) {
             // Replace the claim after its first verification and immediately
-            // before the recheck that guards the destructive removal.
+            // before the recheck that guards the destructive removal. The
+            // original claim is renamed aside rather than deleted: an inode
+            // allocator with eager reuse (ext4 on the Linux runner) can give
+            // the replacement directory the same dev/ino the deleted one just
+            // freed, which would make the swap invisible to the identity
+            // recheck. Renaming keeps that inode allocated, so the
+            // replacement provably differs on every platform.
             const entries = await readdir(paths.controlDirectory);
             const claim = entries.find((name) => name.startsWith(CLAIM_PREFIX));
             assert.ok(claim, "the reclaimed lock is at its claim path");
             swappedClaim = path.join(paths.controlDirectory, claim);
-            await rm(swappedClaim, { recursive: true, force: true });
+            await rename(swappedClaim, `${swappedClaim}.pinned`);
             await mkdir(swappedClaim, { recursive: true, mode: 0o700 });
             if (POSIX) await chmod(swappedClaim, 0o700);
             await writeFile(path.join(swappedClaim, "foreign.json"), "{}\n", { mode: 0o600 });
@@ -1388,7 +1405,11 @@ test("B1: dead-claim cleanup never recursively deletes a claim replaced after it
           const claim = entries.find((name) => name.startsWith(CLAIM_PREFIX));
           assert.ok(claim, "the dead claim was renamed to a fresh claim");
           swappedClaim = path.join(paths.controlDirectory, claim);
-          await rm(swappedClaim, { recursive: true, force: true });
+          // Pin the original aside rather than deleting it: an inode
+          // allocator with eager reuse (ext4 on the Linux runner) can give the
+          // replacement directory the same dev/ino the deleted one just freed,
+          // which would make the swap invisible to the identity recheck.
+          await rename(swappedClaim, `${swappedClaim}.pinned`);
           await mkdir(swappedClaim, { recursive: true, mode: 0o700 });
           if (POSIX) await chmod(swappedClaim, 0o700);
           await writeFile(path.join(swappedClaim, "foreign.json"), "{}\n", { mode: 0o600 });

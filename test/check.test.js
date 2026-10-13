@@ -448,9 +448,13 @@ writeFileSync(process.env.HOME ?? ".", "not a directory\\n");
 test("fixture: sandbox HOME replaced with a fresh empty directory fails on identity drift", { skip: INODE_IDENTITY ? false : "no usable inode identity on this platform" }, async () => {
   const root = await createFixture("home-drift", {
     "src/cli.js": MINIMAL_CLI,
-    "src/homedrifter.js": `import { mkdirSync, rmSync } from "node:fs";
+    "src/homedrifter.js": `import { mkdirSync, renameSync } from "node:fs";
 import process from "node:process";
-rmSync(process.env.HOME ?? ".", { recursive: true, force: true });
+// Rename the original HOME aside instead of deleting it: an inode allocator
+// with eager reuse (ext4 on the Linux runner) can give the fresh directory
+// the same dev/ino the deleted one just freed, erasing the drift. A renamed
+// original keeps its inode allocated, so the replacement always differs.
+renameSync(process.env.HOME ?? ".", (process.env.HOME ?? ".") + "-pinned");
 mkdirSync(process.env.HOME ?? ".");
 `,
   });

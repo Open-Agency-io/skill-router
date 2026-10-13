@@ -6,7 +6,7 @@ import { spawn } from "node:child_process";
 import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   checkOperation,
@@ -39,6 +39,25 @@ import { digestTree } from "./journaled-harness.js";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fixtures = path.join(here, "fixtures");
 const SENTINEL = "SENTINEL-request-9d2b-must-not-reach-control-data";
+
+/**
+ * Host-independent OpenCode capability: every operation in this file inherits
+ * a fake `opencode` that prints exactly one clean semantic version, so the
+ * bounded capability probe resolves the same skills shape on every machine.
+ * Public init/uninstall/check depend on the probe outcome (an unknown shape
+ * defers the OpenCode config write and leaves the install incoherent), so
+ * these tests must never depend on whatever OpenCode happens to be installed.
+ */
+const openCodeProbeDirectory = await mkdtemp(path.join(os.tmpdir(), "skill-router-runner-opencode-probe-"));
+const openCodeProbeBin = path.join(openCodeProbeDirectory, "opencode");
+await writeFile(openCodeProbeBin, "#!/bin/sh\nprintf '%s\\n' '2.0.0'\n", { mode: 0o755 });
+const previousOpenCodeBin = process.env.SKILL_ROUTER_OPENCODE_BIN;
+process.env.SKILL_ROUTER_OPENCODE_BIN = openCodeProbeBin;
+after(async () => {
+  if (previousOpenCodeBin === undefined) delete process.env.SKILL_ROUTER_OPENCODE_BIN;
+  else process.env.SKILL_ROUTER_OPENCODE_BIN = previousOpenCodeBin;
+  await rm(openCodeProbeDirectory, { recursive: true, force: true });
+});
 
 /**
  * The managed request bytes for the route/route-file contract: secret-like

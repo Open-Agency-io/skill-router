@@ -72,6 +72,16 @@ const invalid = (message, details) => new JournalError(JOURNAL_ERROR_CODES.JOURN
 const conflict = (message, details) => new JournalError(JOURNAL_ERROR_CODES.RECOVERY_CONFLICT, message, details);
 const ambiguous = (message, details) => new JournalError(JOURNAL_ERROR_CODES.RECOVERY_AMBIGUOUS, message, details);
 
+// Two verified cleaners may race the same artifact tree. The winner's
+// progress is made of durable writes and directory fsyncs, each of which can
+// take a long time on slow (network-backed CI) storage, so the loser's
+// cooperative re-inspect windows below span several seconds rather than a few
+// hundred milliseconds before a rival converges or a claim is called foreign.
+// Every window stays bounded and fail-closed: an unattributed or
+// mismatching claim is still refused, only after the wait.
+const CONCURRENT_CLEANUP_WAIT_ATTEMPTS = 200;
+const CONCURRENT_CLEANUP_WAIT_POLL_MS = 25;
+
 const CONTROL_CHARACTERS = new RegExp(
   `[${String.fromCharCode(0)}-${String.fromCharCode(31)}${String.fromCharCode(127)}]`,
   "g",
@@ -463,11 +473,11 @@ export async function cleanupStateArtifactViaClaim({ lease, artifactPath, transa
   let claimedTree = claimState.status === "ok" ? claimState.movedPath : null;
   let claimPresent = claimState.status === "foreign" || claimedTree !== null;
   if (original !== "absent" && claimPresent) {
-    // Re-inspect briefly: a concurrent verified cleaner may be mid-move; only
-    // a state that stays doubled after the bounded re-inspect is ambiguous.
-    for (let attempt = 0; attempt < 10; attempt += 1) {
+    // Re-inspect: a concurrent verified cleaner may be mid-move; only a state
+    // that stays doubled after the bounded re-inspect is ambiguous.
+    for (let attempt = 0; attempt < CONCURRENT_CLEANUP_WAIT_ATTEMPTS; attempt += 1) {
       await new Promise((resolve) => {
-        setTimeout(resolve, 25);
+        setTimeout(resolve, CONCURRENT_CLEANUP_WAIT_POLL_MS);
       });
       original = await inspect(artifactPath);
       claimState = await validateClaimContainer(claimPath, binding);
@@ -508,13 +518,31 @@ export async function cleanupStateArtifactViaClaim({ lease, artifactPath, transa
     const created = await createAttributedClaimContainer(claimPath, binding);
     if (created.status === "exists") {
       // A concurrent verified cleaner may be creating or using this container:
-      // briefly re-inspect for a fully attributed claim before deciding.
-      for (let attempt = 0; attempt < 10; attempt += 1) {
+      // re-inspect for a fully attributed claim before deciding. A container
+      // that is gone ("absent") is terminal too — it means the concurrent
+      // cleaner finished the whole removal, which is the idempotent outcome
+      // this call was racing for — so the loop stops on it rather than waiting
+      // out the full window and then misreporting "absent" as a conflict.
+      for (let attempt = 0; attempt < CONCURRENT_CLEANUP_WAIT_ATTEMPTS; attempt += 1) {
         claimState = await validateClaimContainer(claimPath, binding);
-        if (claimState.status === "ok") break;
+        if (claimState.status === "ok" || claimState.status === "absent") break;
         await new Promise((resolve) => {
-          setTimeout(resolve, 25);
+          setTimeout(resolve, CONCURRENT_CLEANUP_WAIT_POLL_MS);
         });
+      }
+      if (claimState.status === "absent") {
+        // The claim container vanished while this call waited: the concurrent
+        // verified cleaner completed the removal. Reconcile from the observed
+        // endpoints — an absent artifact means the removal is done.
+        const originalNow = await inspectStateTree(artifactPath);
+        if (originalNow.status === "absent") {
+          await removeAttributedClaimContainer(claimPath, binding);
+          return "absent";
+        }
+        throw conflict(
+          `the cleanup claim at ${claimPath} vanished while it was being cleaned; the ${label} at ${artifactPath} is preserved`,
+          { path: claimPath },
+        );
       }
       if (claimState.status !== "ok") {
         throw conflict(
@@ -549,7 +577,24 @@ export async function cleanupStateArtifactViaClaim({ lease, artifactPath, transa
         renameError = error;
       }
       await syncDirectory(path.dirname(artifactPath));
-      await syncDirectory(claimPath);
+      try {
+        await syncDirectory(claimPath);
+      } catch (error) {
+        // The claim directory can vanish between the observation that named a
+        // resumable container and this fsync: a concurrent verified cleaner
+        // that owned the same claim finishes the whole removal, rmdir included.
+        // That is the idempotent "absent" outcome for this race, reconciled
+        // from the observed endpoints (the same idiom the rename reconciliation
+        // above uses) rather than surfaced as a spurious ENOENT.
+        if (error?.code === "ENOENT") {
+          const originalNow = await inspectStateTree(artifactPath);
+          if (originalNow.status === "absent") {
+            await removeAttributedClaimContainer(claimPath, binding);
+            return "absent";
+          }
+        }
+        throw error;
+      }
       if (renameError) {
         const afterOriginal = await inspectStateTree(artifactPath);
         if (afterOriginal.status !== "absent") throw renameError;
@@ -579,9 +624,9 @@ export async function cleanupStateArtifactViaClaim({ lease, artifactPath, transa
     claimed.status !== "owned"
     || !isIdentityAvailable(claimed.identity)
     || !artifactMatchesExpectation(claimed, expectation);
-  for (let attempt = 0; unverified() && attempt < 10; attempt += 1) {
+  for (let attempt = 0; unverified() && attempt < CONCURRENT_CLEANUP_WAIT_ATTEMPTS; attempt += 1) {
     await new Promise((resolve) => {
-      setTimeout(resolve, 25);
+      setTimeout(resolve, CONCURRENT_CLEANUP_WAIT_POLL_MS);
     });
     claimed = await inspectStateTree(claimedTree);
     if (claimed.status === "absent") {

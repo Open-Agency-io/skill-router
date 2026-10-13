@@ -813,9 +813,14 @@ test("durableUnlink preserves a replacement that appears at the fresh claim (B1)
           await originalRename(from, to);
           if (path.resolve(from) === path.resolve(file)) {
             // B1 injection: a hostile same-user replacement appears at the
-            // fresh claim right after the rename that created it.
+            // fresh claim right after the rename that created it. The claim is
+            // renamed aside, not deleted: an inode allocator with eager reuse
+            // (ext4 on the Linux runner) can give the replacement the same
+            // dev/ino the deleted claim just freed, which would make the swap
+            // invisible to the identity recheck. Renaming keeps that inode
+            // allocated, so the replacement provably differs everywhere.
             claimPath = to;
-            await rm(to, { force: true });
+            await rename(to, path.join(root, "pinned-original"));
             await writeFile(to, "swapped", { mode: 0o600 });
           }
         },
@@ -829,7 +834,11 @@ test("durableUnlink preserves a replacement that appears at the fresh claim (B1)
     );
     assert.ok(claimPath, "the removal actually reached the claim rename");
     assert.equal(await readFile(claimPath, "utf8"), "swapped", "the replacement survives");
-    assert.deepEqual(await readdir(root), [path.basename(claimPath)], "nothing else was touched");
+    assert.deepEqual(
+      (await readdir(root)).sort(),
+      [path.basename(claimPath), "pinned-original"].sort(),
+      "only the preserved replacement and the pinned original remain",
+    );
   });
 });
 
@@ -850,16 +859,25 @@ test("B1: a replacement that appears before durableUnlink's first observation su
 
     // The hostile replacement lands between the caller's attribution and this
     // call's first observation: the attributed identity no longer matches, so
-    // nothing is renamed, claimed, or unlinked.
-    await rm(file, { force: true });
+    // nothing is renamed, claimed, or unlinked. The original is renamed aside
+    // rather than deleted: an inode allocator with eager reuse (ext4 on the
+    // Linux runner) can hand the replacement the same dev/ino the deleted file
+    // just freed, which would make the swap invisible to the identity check.
+    // Renaming keeps the old inode allocated, so the replacement always
+    // differs on every platform.
+    await rename(file, path.join(root, "owner.json.pinned"));
     await writeFile(file, "replacement", { mode: 0o600 });
     await assert.rejects(() => durableUnlink(file, attributed), (error) => error.code === "EBUSY");
     assert.equal(await readFile(file, "utf8"), "replacement", "the replacement survives byte-identical");
-    assert.deepEqual(await readdir(root), ["owner.json"], "no claim was created");
+    assert.deepEqual(
+      (await readdir(root)).sort(),
+      ["owner.json", "owner.json.pinned"].sort(),
+      "no claim was created",
+    );
 
     // With the current attribution the same call succeeds exactly.
     await durableUnlink(file, fileIdentity(await lstat(file)));
-    assert.deepEqual(await readdir(root), []);
+    assert.deepEqual(await readdir(root), ["owner.json.pinned"]);
   });
 });
 

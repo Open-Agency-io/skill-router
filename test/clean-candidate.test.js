@@ -891,6 +891,12 @@ test("the core gate environment carries no credentials, config channels, or host
     INIT_CWD: "/host/project",
     GIT_CONFIG_PARAMETERS: "core.hooksPath=/host/hooks",
     GIT_DIR: "/host/elsewhere",
+    // Realistic GitHub-hosted runner values: the step's working directory and
+    // shell context leak the host workspace path through PWD/OLDDPWD unless
+    // the scrub drops them. The gate child must never see any of them.
+    PWD: "/home/runner/work/skill-router/skill-router",
+    OLDPWD: "/home/runner/work",
+    _: "/opt/hostedtoolcache/node/24.21.0/x64/bin/node",
     TMPDIR: ambientTemp,
     TMP: ambientTemp,
     TEMP: ambientTemp,
@@ -928,6 +934,9 @@ test("the core gate environment carries no credentials, config channels, or host
       "INIT_CWD",
       "GIT_CONFIG_PARAMETERS",
       "GIT_DIR",
+      "PWD",
+      "OLDPWD",
+      "_",
     ];
     for (const key of injectedChannels) {
       assert.ok(!(key in env), `${key} must not reach a gate child`);

@@ -2695,8 +2695,13 @@ test("finalize refuses a recorded directory replaced before its deepest-first ph
     const directoryHandle = typeof flags === "number" && (flags & (fsConstants.O_DIRECTORY ?? 0)) !== 0;
     if (directoryHandle && path.resolve(target) === path.resolve(stagedDocs)) {
       // The recorded directory is swapped for a different real directory
-      // between the walk and the deepest-first finalize phase.
-      await rm(stagedDocs, { recursive: true, force: true });
+      // between the walk and the deepest-first finalize phase. The original is
+      // renamed aside rather than deleted: an inode allocator with eager reuse
+      // (ext4 on the Linux runner) can give the replacement directory the same
+      // dev/ino the deleted one just freed, which would make the swap
+      // invisible to the identity pin. Renaming keeps that inode allocated,
+      // so the replacement provably differs on every platform.
+      await rename(stagedDocs, `${stagedDocs}.pinned`);
       await mkdir(stagedDocs, { recursive: true });
       await writeFile(path.join(stagedDocs, "other.md"), "other\n");
     }

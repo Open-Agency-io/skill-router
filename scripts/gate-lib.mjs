@@ -730,6 +730,9 @@ export function scrubEnvironment(base = process.env, overrides = {}) {
     "EDITOR",
     "VISUAL",
     "PAGER",
+    "PWD",
+    "OLDPWD",
+    "_",
   ]);
   const environment = {};
   for (const [key, value] of Object.entries(base ?? {})) {

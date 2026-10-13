@@ -243,6 +243,12 @@ test("environment scrubbing drops credentials and host lifecycle configuration",
       GOOGLE_APPLICATION_CREDENTIALS: "/host/sa.json",
       SSH_AUTH_SOCK: "/host/ssh-agent",
       SSLKEYLOGFILE: "/host/keys.log",
+      // Shell and step working-directory context: on a hosted runner these
+      // carry the host workspace path (e.g. PWD=/home/runner/work/...), so
+      // they are host-path channels, not configuration.
+      PWD: "/home/runner/work/skill-router/skill-router",
+      OLDPWD: "/home/runner/work",
+      _: "/opt/hostedtoolcache/node/24.21.0/x64/bin/node",
     },
     { HOME: "/tmp/gate-home", [GATE_ENV_FLAG]: "1" },
   );
@@ -284,6 +290,9 @@ test("environment scrubbing drops credentials and host lifecycle configuration",
     "GOOGLE_APPLICATION_CREDENTIALS",
     "SSH_AUTH_SOCK",
     "SSLKEYLOGFILE",
+    "PWD",
+    "OLDPWD",
+    "_",
   ]) {
     assert.ok(!(key in scrubbed), `${key} must be scrubbed`);
   }

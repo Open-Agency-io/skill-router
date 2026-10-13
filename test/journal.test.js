@@ -1432,7 +1432,12 @@ test("removeJournal enforces CAS, inode identity, and the lease", async () => {
 
     // A swap between this call's reread and its unlink (detected through the
     // pre-unlink lease assertion) is drift even when the bytes are identical.
-    await rm(context.paths.journalFile);
+    // The swap renames the old journal aside instead of deleting it: an inode
+    // allocator with eager reuse (ext4 on the Linux runner) can give the
+    // replacement the same dev/ino the deleted file just freed, which would
+    // make the swap invisible to the identity check. Renaming keeps the old
+    // inode allocated, so the replacement always differs on every platform.
+    await rename(context.paths.journalFile, `${context.paths.journalFile}.pinned`);
     await writeFile(context.paths.journalFile, goodBytes, { mode: 0o600 });
     if (process.platform !== "win32") await chmod(context.paths.journalFile, 0o600);
     let swaps = 0;
@@ -1440,7 +1445,7 @@ test("removeJournal enforces CAS, inode identity, and the lease", async () => {
       async assertHeld() {
         swaps += 1;
         if (swaps === 2) {
-          await rm(context.paths.journalFile);
+          await rename(context.paths.journalFile, `${context.paths.journalFile}.swapped`);
           await writeFile(context.paths.journalFile, goodBytes, { mode: 0o600 });
           if (process.platform !== "win32") await chmod(context.paths.journalFile, 0o600);
         }
@@ -2232,9 +2237,13 @@ test("cleanupPayloads preserves a payload replaced after its final verification 
           if (path.resolve(from) === path.resolve(payloadPath)) {
             // B1 injection: a hostile same-user replacement appears at the
             // fresh claim right after the rename that created it - the final
-            // verification must refuse and the replacement must survive.
+            // verification must refuse and the replacement must survive. The
+            // claim is renamed aside, not deleted: an inode allocator with
+            // eager reuse (ext4 on the Linux runner) can give the replacement
+            // the same dev/ino the deleted claim just freed, which would make
+            // the swap invisible to the identity recheck.
             swappedClaim = to;
-            await rm(to, { force: true });
+            await rename(to, `${to}.pinned`);
             await writeFile(to, "swapped", { mode: 0o600 });
           }
         },

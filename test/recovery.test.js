@@ -4,9 +4,10 @@
 // SIGKILL fixtures for both transaction kinds.
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { chmod, lstat, mkdir, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   claimPathFor,
@@ -67,6 +68,25 @@ process.env.SKILL_ROUTER_CLAUDE_BIN = "/nonexistent-claude-binary-for-tests";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const SRC = path.resolve(here, "..", "src");
 const TX = "ab".repeat(32);
+
+/**
+ * Host-independent OpenCode capability: this file inherits a fake `opencode`
+ * that prints exactly one clean semantic version, so the bounded capability
+ * probe resolves the same skills shape on every machine. Public-operation and
+ * child-process recovery fixtures depend on the probe outcome (an unknown
+ * shape defers the OpenCode config write), so the tests must never inherit
+ * whatever OpenCode (or none) happens to be installed on the host.
+ */
+const openCodeProbeDirectory = await mkdtemp(path.join(os.tmpdir(), "skill-router-recovery-opencode-probe-"));
+const openCodeProbeBin = path.join(openCodeProbeDirectory, "opencode");
+await writeFile(openCodeProbeBin, "#!/bin/sh\nprintf '%s\\n' '2.0.0'\n", { mode: 0o755 });
+const previousOpenCodeBin = process.env.SKILL_ROUTER_OPENCODE_BIN;
+process.env.SKILL_ROUTER_OPENCODE_BIN = openCodeProbeBin;
+after(async () => {
+  if (previousOpenCodeBin === undefined) delete process.env.SKILL_ROUTER_OPENCODE_BIN;
+  else process.env.SKILL_ROUTER_OPENCODE_BIN = previousOpenCodeBin;
+  await rm(openCodeProbeDirectory, { recursive: true, force: true });
+});
 
 async function capture(run) {
   let caught = null;
@@ -3351,7 +3371,12 @@ test("B2: a payload swapped after it was read is preserved and never consumed", 
     const claimPath = claimPathFor(record.target, B2_TX);
     const lease = scriptedLease(project.paths, {
       2: async () => {
-        await rm(record.after.payloadPath, { force: true });
+        // Rename the consumed payload aside instead of deleting it: an inode
+        // allocator with eager reuse (ext4 on the Linux runner) can give the
+        // replacement the same dev/ino the deleted file just freed, which
+        // would make the swap invisible to the identity recheck. Renaming
+        // keeps the old inode allocated, so the replacement always differs.
+        await rename(record.after.payloadPath, `${record.after.payloadPath}.pinned`);
         await writeFile(record.after.payloadPath, "swapped-payload", { mode: 0o600 });
       },
     });
@@ -3415,7 +3440,12 @@ test("B2: a foreign replacement at the target during rollback is preserved, neve
     // never be proven to be the classified one.
     const lease = scriptedLease(project.paths, {
       1: async () => {
-        await rm(record.target, { force: true });
+        // Rename the classified entry aside instead of deleting it: an inode
+        // allocator with eager reuse (ext4 on the Linux runner) can give the
+        // replacement the same dev/ino the deleted file just freed, which
+        // would make the swap invisible to the identity check. Renaming keeps
+        // the old inode allocated, so the replacement always differs.
+        await rename(record.target, `${record.target}.pinned`);
         await writeFile(record.target, "foreign-replacement", { mode: 0o600 });
       },
     });
@@ -3872,8 +3902,13 @@ test("R3: a foreign root replacement of a recorded deletion claim is never autho
       child: original.identity,
       deletion: { child: path.basename(deleteChild), identity: original.identity },
     });
-    // A foreign root replacement: same shape, different identity.
-    await rm(deleteChild, { recursive: true, force: true });
+    // A foreign root replacement: same shape, different identity. The
+    // original is renamed aside, out of the claim container, rather than
+    // deleted: an inode allocator with eager reuse (ext4 on the Linux
+    // runner) can give the replacement tree the same dev/ino the deleted one
+    // just freed, which would make the replacement indistinguishable from
+    // the recorded deletion claim.
+    await rename(deleteChild, path.join(root, "pinned-delete-child"));
     await ownedMarkerTree(deleteChild);
     const replacement = await readFile(path.join(deleteChild, STATE_MARKER_FILE), "utf8");
 
