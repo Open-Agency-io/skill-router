@@ -99,6 +99,63 @@ function jobRun(doc, jobName) {
   return runs[0].run;
 }
 
+/**
+ * Shell commands of a `run` script as the runner would execute them, with
+ * backslash line continuations joined first — so a multi-line `gh release
+ * create … \` invocation is checked as one command, not as loose lines.
+ */
+function shellCommands(script) {
+  const commands = [];
+  let current = null;
+  for (const raw of script.split("\n")) {
+    const continued = /\\\s*$/.test(raw);
+    const body = raw.replace(/\\\s*$/, "").trim();
+    current = current === null ? body : `${current} ${body}`;
+    if (!continued) {
+      commands.push(current);
+      current = null;
+    }
+  }
+  if (current !== null) commands.push(current);
+  return commands;
+}
+
+/**
+ * Every `gh release view`/`gh release create` command the script performs,
+ * normalised to start at the `gh` token so a guarding `if …; then` prefix and
+ * comment lines that merely mention the command do not change the result.
+ */
+function ghReleaseCommands(script) {
+  const commands = [];
+  for (const command of shellCommands(script)) {
+    const trimmed = command.trim();
+    if (trimmed.startsWith("#")) continue;
+    const start = trimmed.search(/\bgh release (?:view|create)\b/);
+    if (start === -1) continue;
+    commands.push(trimmed.slice(start));
+  }
+  return commands;
+}
+
+/**
+ * Every `gh release` invocation must name this exact repository explicitly.
+ * The release job has no checkout, so `gh` has no git remote to fall back on:
+ * without `--repo` the command dies with `not a git repository`, and the
+ * pre-create existence check would silently report "no release" for the wrong
+ * reason. This is the assertion the mutation cases below prove can fail.
+ */
+function assertRepoBound(script, label) {
+  const commands = ghReleaseCommands(script);
+  assert.ok(commands.length >= 1, `${label}: expected at least one gh release invocation`);
+  for (const command of commands) {
+    assert.match(
+      command,
+      /--repo "\$GITHUB_REPOSITORY"/,
+      `${label}: gh release must name the exact repository explicitly: ${command}`,
+    );
+  }
+}
+
 function expressionsIn(doc) {
   return stringsWithPath(doc)
     .filter(({ value }) => value.includes("${{"))
@@ -274,7 +331,10 @@ test("the release workflow confines candidate code to the read-only job and neve
 
   const script = jobRun(doc, "release");
   const verifyIndex = script.indexOf("sha256sum --check SHA256SUMS");
-  const refuseIndex = script.indexOf('if gh release view "$RELEASE_TAG"');
+  // The existence check must itself be repository-bound: an unbound `gh
+  // release view` in this checkout-less job fails for the wrong reason and
+  // would let the run fall through to the create.
+  const refuseIndex = script.indexOf('if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"');
   const createMatch = /^\s*gh release create\b/m.exec(script);
   const enumerateMatch = /^\s*gh api "repos\//m.exec(script);
   assert.ok(verifyIndex >= 0, "the downloaded bundle is checksummed locally");
@@ -303,6 +363,79 @@ test("the release workflow confines candidate code to the read-only job and neve
   assert.ok(!/npm\s+publish/.test(raw), "npm publication is Phase 12 and must not happen here");
   assert.ok(!/NPM_TOKEN|NODE_AUTH_TOKEN|registry-url|--access\s+public/.test(raw), "no npm credential or registry configuration");
   assert.ok(!/\bdocker\b/i.test(raw), "containers are a later gate");
+});
+
+test("the checkout-less release job binds every gh release invocation to this exact repository", () => {
+  const { doc } = workflow("release");
+  const releaseJob = doc.jobs.release;
+
+  // 1. The write job stays checkout-less by design: its only step is the
+  //    pinned artifact download, and it never grows a clone of the repository.
+  const uses = (releaseJob.steps ?? []).map((step) => step.uses).filter(Boolean);
+  assert.deepEqual(
+    uses,
+    [`actions/download-artifact@${PINS["actions/download-artifact"]}`],
+    "the release job's only action is the pinned artifact download",
+  );
+  assert.equal(
+    uses.filter((use) => String(use).startsWith("actions/checkout@")).length,
+    0,
+    "the release job must not check out the repository",
+  );
+  assert.equal(releaseJob.permissions.contents, "write", "permissions are unchanged: only this job may write");
+  const script = jobRun(doc, "release");
+  assert.ok(!/git clone|actions\/checkout|git\s+init/.test(script), "the script never materialises a git working tree");
+  assert.ok(!/\$\{\{/.test(script), "the script reads no workflow expression, only env");
+
+  // 2. Exactly two `gh release` invocations — the pre-create existence check
+  //    and the create — and both name this repository explicitly.
+  const commands = ghReleaseCommands(script);
+  assert.deepEqual(
+    commands.map((command) => command.split(/\s+/).slice(0, 3).join(" ")),
+    ["gh release view", "gh release create"],
+    "exactly the view and create invocations exist, in that order",
+  );
+  assertRepoBound(script, "release");
+  assert.ok(script.includes('"$GITHUB_REPOSITORY"'), "the repository comes from the environment, quoted");
+  assert.ok(script.includes('"$RELEASE_TAG"'), "the tag still comes from the environment, quoted");
+  assert.match(
+    script,
+    /GITHUB_REPOSITORY" != "Open-Agency-io\/skill-router"/,
+    "the runner-provided repository identity is re-checked before it is used",
+  );
+  assert.match(script, /gh api "repos\/\$\{GITHUB_REPOSITORY\}\//, "the post-create API read is repository-bound too");
+  assert.ok(script.includes("--verify-tag"), "tag verification is preserved");
+  assert.ok(script.includes("--generate-notes"), "release notes generation is preserved");
+
+  // 3. Discriminating mutations: dropping or redirecting the repository binding
+  //    must make the binding assertion fail. If any of these ever pass, the
+  //    test above has stopped proving anything.
+  const mutations = [
+    ["the view flag is removed", (s) => s.replace('if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"', () => 'if gh release view "$RELEASE_TAG"')],
+    [
+      "the create flag line is removed",
+      (s) => s.replace(/ --repo "\$GITHUB_REPOSITORY" \\\n/, () => " \\\n"),
+    ],
+    ["both flags are redirected", (s) => s.replaceAll('--repo "$GITHUB_REPOSITORY"', () => '--repo "someone-else/skill-router"')],
+    ["the flag value is emptied", (s) => s.replaceAll('--repo "$GITHUB_REPOSITORY"', () => '--repo ""')],
+    ["the flag is made bare", (s) => s.replaceAll('--repo "$GITHUB_REPOSITORY"', () => "--repo")],
+  ];
+  for (const [label, mutate] of mutations) {
+    const mutated = mutate(script);
+    assert.notEqual(mutated, script, `${label}: the mutation must actually change the script`);
+    assert.throws(
+      () => assertRepoBound(mutated, "mutated"),
+      /must name the exact repository explicitly/,
+      `${label}: the repository-binding assertion must fail`,
+    );
+  }
+  // The unbound forms are exactly the failure mode seen live: `gh` falls back
+  // to a git remote that a checkout-less job does not have.
+  assert.throws(
+    () => assertRepoBound('gh release create "v0.1.0" "x.tgz" --verify-tag', "unbound"),
+    /must name the exact repository explicitly/,
+    "an unbound gh release invocation is refused by the assertion",
+  );
 });
 
 test("the release build job records and verifies the exact bundle before it is uploaded", () => {

@@ -168,6 +168,21 @@ jobs:
             echo "refusing a tag that is not an exact semantic version: $RELEASE_TAG" >&2
             exit 1
           fi
+
+          # This job's only step is the pinned artifact download: no clone, no
+          # toolchain, no repository code, and therefore no git remote for `gh`
+          # to infer a repository from. Every `gh` call below names this exact
+          # repository explicitly instead, so validate the runner-provided
+          # identity once here and pass it to each invocation (the `gh api`
+          # call already names the repository inside its path).
+          if [[ ! "$GITHUB_REPOSITORY" =~ ^[0-9A-Za-z._-]+/[0-9A-Za-z._-]+$ ]]; then
+            echo "refusing a malformed repository identity: ${GITHUB_REPOSITORY:-unset}" >&2
+            exit 1
+          fi
+          if [ "$GITHUB_REPOSITORY" != "Open-Agency-io/skill-router" ]; then
+            echo "refusing to release outside Open-Agency-io/skill-router (GITHUB_REPOSITORY is '$GITHUB_REPOSITORY')" >&2
+            exit 1
+          fi
           case "$ARTIFACT_NAME" in
             ""|*[!0-9A-Za-z._~+-]*)
               echo "refusing an unsafe artifact name from the build job: $ARTIFACT_NAME" >&2
@@ -244,13 +259,15 @@ jobs:
           # no forced overwrite, no replacement. (If a release appears between
           # this check and the create below, `gh release create` fails instead
           # of overwriting it.)
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "release $RELEASE_TAG already exists; refusing to overwrite or add assets to it" >&2
             exit 1
           fi
 
-          # Create once, with only the two verified files.
+          # Create once, with only the two verified files, against this exact
+          # repository — `--verify-tag` still requires the tag to exist there.
           gh release create "$RELEASE_TAG" "$tarball" "release-assets/SHA256SUMS" \
+            --repo "$GITHUB_REPOSITORY" \
             --verify-tag --title "$RELEASE_TAG" --generate-notes
 
           # Post-create verification. `gh api` (REST) is used deliberately: it
