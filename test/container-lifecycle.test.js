@@ -24,6 +24,11 @@ import {
 } from "../scripts/container-lib.mjs";
 
 const manifest = loadMatrix(repoRoot);
+// The fake `npm pack` must produce the tarball name the real harness
+// predicts from the actual package.json (name+version), or the lifecycle
+// refuses the pack before any build runs.
+const PACKAGE_VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
+const PACKED_TARBALL_NAME = `openagency.io-skill-router-${PACKAGE_VERSION}.tgz`;
 const MODEL_ENV = {
   SKILL_ROUTER_OPENCODE_MODEL: "openai/gpt-test-model",
   SKILL_ROUTER_CLAUDE_MODEL: "sonnet",
@@ -88,7 +93,7 @@ function makeFake({
     if (bin === "npm" && sub === "pack") {
       const destination = argv[argv.indexOf("--pack-destination") + 1];
       mkdirSync(destination, { recursive: true });
-      const name = "openagency.io-skill-router-0.1.0.tgz";
+      const name = PACKED_TARBALL_NAME;
       writeFileSync(path.join(destination, name), "packed-artifact-bytes");
       seen.pack += 1;
       return ok(`${name}\n`);
@@ -268,7 +273,7 @@ function resolvedCaseSpec() {
   const planned = planCaseRun({
     manifest,
     case: descriptor,
-    artifactPath: path.join(os.tmpdir(), "skill-router-pack-unit", "openagency.io-skill-router-0.1.0.tgz"),
+    artifactPath: path.join(os.tmpdir(), "skill-router-pack-unit", PACKED_TARBALL_NAME),
     runId: newRunId(),
     repoRoot,
     home: process.env.HOME,

@@ -11,25 +11,22 @@ name: Publish npm (staged)
 # the staged version stays a manual npm-maintainer action (proof-of-presence,
 # 2FA) and is never performed here.
 #
-# Activation is external and deferred; nothing in this repository activates
-# publication:
-#   1. a human must first bootstrap the package on npm by staging the exact
-#      Phase-11 validated tarball with `npm stage publish … --access public
-#      --tag latest --ignore-scripts` (npm staged publishing can create a
-#      package that does not exist yet, and ownership of the `openagency.io`
-#      scope for this package has been verified, so no scope-rights blocker
-#      remains: the bootstrap is an authenticated human step that publicly
-#      creates a `0.0.0-stage` placeholder before a maintainer approves it
-#      with 2FA — approval never happens in this repository), and
-#   2. an npm trusted publisher must then be configured for this repository,
-#      for this workflow's exact filename `publish-npm.yml`, with stage-only
-#      permission (npm requires the workflow filename to match exactly); its
-#      first successful OIDC stage must land within npm's two-day activation
-#      window, after which traditional npm tokens are restricted.
-#   The manually bootstrapped *first* version cannot carry trusted-publisher
-#   OIDC provenance — it is approved by a human with 2FA. Later public
-#   versions staged through this workflow get npm's automatic provenance as
-#   long as the repository and the package are public.
+# Publication status — nothing in this repository activates publication:
+#   1. the package was bootstrapped on npm by a one-time, authenticated human
+#      `npm stage publish … --access public --tag latest --ignore-scripts` of
+#      the exact Phase-11 validated tarball, approved with 2FA — so the
+#      bootstrapped *first* version cannot carry trusted-publisher OIDC
+#      provenance (a permanent historical fact), and approval never happens
+#      in this repository; and
+#   2. an npm trusted publisher is configured for this repository, for this
+#      workflow's exact filename `publish-npm.yml`, with stage-only
+#      permission (npm requires the workflow filename to match exactly). The
+#      configuration proves nothing about any release on its own: npm's
+#      trusted-publisher actor and automatic provenance attach only to a
+#      version this workflow stages successfully, as long as the repository
+#      and the package are public. npm expires a newly configured trusted
+#      publisher unless a successful stage lands within its two-day window,
+#      after which traditional npm tokens are restricted.
 #
 # The job never checks out the repository and never executes repository code:
 # every command below is fixed script text, written to the runner workspace at

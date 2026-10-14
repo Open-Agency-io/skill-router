@@ -762,7 +762,7 @@ test("registration verification never reports missing state as healthy", async (
     const empty = createFakeClaudeRunner();
     const missing = await verifyClaudeRegistration({
       plan: registration,
-      installation: { claude: { version: "0.1.0" } },
+      installation: { claude: { version: ROUTER_PACKAGE_VERSION } },
       exec: empty,
       cwd: root,
     });
@@ -777,7 +777,7 @@ test("registration verification never reports missing state as healthy", async (
     await registerClaude({ plan: registration, exec: runner, actions: [], cwd: root });
     const healthy = await verifyClaudeRegistration({
       plan: registration,
-      installation: { claude: { version: "0.1.0" } },
+      installation: { claude: { version: ROUTER_PACKAGE_VERSION } },
       exec: runner,
       cwd: root,
     });
@@ -786,7 +786,7 @@ test("registration verification never reports missing state as healthy", async (
     runner.state.plugins[0].version = "0.0.9";
     const stale = await verifyClaudeRegistration({
       plan: registration,
-      installation: { claude: { version: "0.1.0" } },
+      installation: { claude: { version: ROUTER_PACKAGE_VERSION } },
       exec: runner,
       cwd: root,
     });

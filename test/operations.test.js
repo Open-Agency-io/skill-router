@@ -952,7 +952,7 @@ test("scan and add regenerate every recorded integration", async () => {
     runner.log.length = 0;
     const scan = await scanOperation({ root, claudeExec: runner });
     assert.deepEqual(scan.harnesses, ["opencode", "claude"]);
-    assert.equal(scan.claude.version, "0.1.1", "changed plugin content must advance the plugin version");
+    assert.equal(scan.claude.version, "0.1.2", "changed plugin content must advance the plugin version (package 0.1.1 -> 0.1.2)");
     assert.ok(
       runner.log.includes(
         `plugin update openagency-skill-router@${scan.claude.marketplace} --scope local`,

@@ -11,10 +11,12 @@
 //   3. CONTRIBUTING documents the real commands, gates, platform matrix,
 //      dependency/lifecycle policy, privacy contracts, and the `main` PR
 //      target — each phrase cross-checked against what actually exists;
-//   4. SECURITY pins supported versions (latest 0.1.x only), the unpublished
-//      package / verified `openagency.io` organization scope / third-party
-//      unscoped name provenance warnings (plus the deferred first bootstrap
-//      and the not-yet-configured trusted publisher), the supply-chain
+//   4. SECURITY pins supported versions (latest 0.1.x only), the published-
+//      package provenance (verified `openagency.io` organization scope, the
+//      manual no-OIDC-provenance bootstrap of 0.1.0 as history, the
+//      configured stage-only trusted publisher whose OIDC claims are proven
+//      only per successful workflow run, and the third-party unscoped
+//      name), the supply-chain
 //      posture, and the private-report
 //      contract — including that private vulnerability reporting is an
 //      external activation gate this repository does not claim is enabled,
@@ -331,17 +333,30 @@ test("SECURITY pins versions, provenance, supply chain, and the private-report c
   assert.ok(flat.includes("no backporting"), "no backporting is promised");
   assert.ok(flat.includes("no long-term support"), "no long-term support is promised");
 
-  // Provenance: unpublished package, verified organization scope, third-party name.
-  assert.ok(flat.includes("not published to npm"), "the package is documented as unpublished");
+  // Provenance: published package, verified organization scope, third-party name.
+  assert.ok(/The package \*\*is published\*\*/.test(flat), "the package is documented as published");
+  assert.ok(
+    !flat.includes("not published") && !flat.includes("unpublished"),
+    "no stale unpublished claim survives in SECURITY",
+  );
   assert.ok(flat.includes("@openagency.io/skill-router"), "the verified package name is documented");
   assert.ok(/ownership was[^.]*verified/i.test(flat), "the organization ownership is documented as verified");
   assert.ok(!flat.includes("unconfirmed"), "the retired unconfirmed-scope claim is gone");
   assert.ok(!flat.includes("@openagency/skill-router"), "the retired provisional package name is gone");
   assert.ok(flat.includes("0.0.0-stage"), "the first bootstrap placeholder is documented");
-  assert.ok(flat.includes("not configured"), "the trusted publisher is not claimed to be configured");
+  assert.ok(
+    /no\s+trusted-publisher\/OIDC provenance/.test(flat),
+    "the bootstrapped first version is documented as lacking OIDC provenance",
+  );
+  assert.ok(flat.includes("is configured"), "the trusted publisher is documented as configured");
+  assert.ok(!flat.includes("not configured"), "the stale unconfigured claim is gone");
+  assert.ok(
+    flat.includes("only after a successful run"),
+    "OIDC actor/provenance claims are bound to a successful workflow run",
+  );
   assert.ok(flat.includes("unrelated third-party"), "the unscoped name is documented as third-party");
   assert.ok(flat.includes("must never be installed or suggested"), "the squatted name is forbidden");
-  assert.ok(!flat.includes("is published") && !flat.includes("has been published"), "no publication is ever claimed");
+  assert.ok(flat.includes("unofficial"), "any other registry package claiming to be Skill Router is unofficial");
 
   // Supply-chain posture.
   assert.ok(flat.includes("No lifecycle scripts"), "the no-lifecycle-scripts posture is stated");
@@ -419,7 +434,7 @@ test("README links the community files and keeps support and security correctly 
   assert.ok(readmeFlat.includes("## Platform support (Phase 14)"), "the platform section is untouched");
   assert.ok(readmeFlat.includes("not CI-qualified"), "the macOS caveat survives");
   assert.ok(readmeFlat.includes("PLATFORM_UNSUPPORTED"), "the Windows refusal survives");
-  assert.ok(readmeFlat.includes("not published to npm yet"), "the unpublished-package warning survives");
+  assert.ok(readmeFlat.includes("published to npm"), "the published-package statement survives");
 });
 
 test("the new community documents carry no contact data, secrets, local paths, or placeholders", () => {

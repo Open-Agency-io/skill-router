@@ -59,9 +59,12 @@ const ALLOWED_EXPRESSION =
 const NPM_VERSION = "11.20.0";
 const PACKAGE_NAME = "@openagency.io/skill-router";
 const ORGANISATION_REPO = "Open-Agency-io/skill-router";
-const RELEASE_TAG = "v0.1.0";
-const PACKAGE_VERSION = "0.1.0";
-const TARBALL_NAME = "openagency.io-skill-router-0.1.0.tgz";
+const RELEASE_TAG = "v0.1.1";
+const PACKAGE_VERSION = "0.1.1";
+const TARBALL_NAME = "openagency.io-skill-router-0.1.1.tgz";
+/** The historical first release: the one-time manual bootstrap on npm. */
+const BOOTSTRAP_TAG = "v0.1.0";
+const BOOTSTRAP_TARBALL_NAME = "openagency.io-skill-router-0.1.0.tgz";
 const REPOSITORY_URL = "git+https://github.com/Open-Agency-io/skill-router.git";
 const HOMEPAGE_URL = "https://github.com/Open-Agency-io/skill-router#readme";
 const BUGS_URL = "https://github.com/Open-Agency-io/skill-router/issues";
@@ -1516,11 +1519,23 @@ test("the Phase 11 workflows still hold no npm authority", () => {
   }
 });
 
-test("the README documents the deferred bootstrap and never suggests the taken unscoped name", () => {
+test("the README documents the publication state and never suggests the taken unscoped name", () => {
   const readme = readFileSync(path.join(repository, "README.md"), "utf8");
   assert.ok(readme.includes(REPOSITORY_URL.replace("git+", "")), "the repository link is documented");
   assert.ok(readme.includes(HOMEPAGE_URL), "the homepage link is documented");
-  assert.ok(readme.includes("not published"), "the package is documented as unpublished");
+  // Current status: the package is published, and no stale current-status
+  // wording ("not published", "not on npm yet", trusted publisher "not
+  // configured") survives — those claims must fail if they come back.
+  assert.ok(/The package\s+\*\*is published\*\*/.test(readme), "the package is documented as published");
+  assert.ok(
+    !/not published|unpublished|not on npm yet/i.test(readme),
+    "no stale unpublished claim survives in the README",
+  );
+  assert.ok(
+    !/has\s+\*\*not been configured yet\*\*|not configured yet/i.test(readme),
+    "the stale unconfigured-trusted-publisher claim is gone",
+  );
+  assert.ok(!readme.includes("do not run now"), "the bootstrap is no longer a current do-not-run blocker");
   assert.ok(!readme.includes("@openagency/skill-router"), "the retired provisional scope is gone from the README");
   assert.ok(!/unconfirmed/i.test(readme), "the obsolete unconfirmed-scope blocker is gone");
   assert.ok(
@@ -1528,16 +1543,19 @@ test("the README documents the deferred bootstrap and never suggests the taken u
     "organization ownership is documented as verified",
   );
   assert.ok(!readme.includes("Stop unless the scope rights are confirmed"), "the scope-rights stop gate is gone");
+  // The one-time manual bootstrap stays documented as a concise historical
+  // record, with its operational safety details intact.
+  assert.ok(/historical/i.test(readme), "the bootstrap is framed as historical");
   assert.ok(readme.includes("--ignore-scripts"), "the manual bootstrap disables scripts");
   assert.ok(
-    readme.includes(`npm stage publish ./release-assets/${TARBALL_NAME}`),
-    "the bootstrap stages the exact tarball file",
+    readme.includes(`npm stage publish ./release-assets/${BOOTSTRAP_TARBALL_NAME}`),
+    "the historical bootstrap staged the exact 0.1.0 tarball file",
   );
   assert.ok(readme.includes("0.0.0-stage"), "the staged bootstrap placeholder is documented");
-  assert.ok(readme.includes("do not run now"), "the bootstrap carries an explicit do-not-run warning");
   assert.ok(readme.includes("mkdir fresh-bootstrap"), "the bootstrap uses a fresh directory of its own");
   assert.ok(readme.includes("ls -A release-assets"), "the bootstrap checks for exactly two assets");
   assert.ok(readme.includes("--json tagName,isDraft,isPrerelease,assets"), "the bootstrap reads the exact release first");
+  assert.ok(readme.includes(BOOTSTRAP_TAG), "the historical bootstrap names the v0.1.0 release");
   assert.ok(
     readme.includes("Never pipe") && readme.includes("sha256sum --check"),
     "the bootstrap refuses a checksum file that names paths",
@@ -1546,9 +1564,16 @@ test("the README documents the deferred bootstrap and never suggests the taken u
   assert.ok(readme.includes("automatic provenance"), "later staged versions get automatic provenance");
   assert.ok(readme.includes("publish-npm.yml"), "the trusted publisher workflow filename is documented");
   assert.ok(readme.includes("stage-only"), "the trusted publisher permission is documented");
+  // The trusted publisher is configured; each OIDC claim is established only
+  // by a successful workflow run — wording chosen to stay true after that
+  // first successful run lands.
+  assert.ok(readme.includes("is configured"), "the trusted publisher is documented as configured");
+  assert.ok(
+    readme.includes("only after a"),
+    "OIDC actor/provenance claims are bound to a successful workflow run",
+  );
   assert.ok(readme.includes("within two days"), "the trusted-publisher activation window is documented");
   assert.ok(readme.includes("restrict any traditional npm tokens"), "token restriction after activation is documented");
-  assert.ok(/has\s+\*\*not been configured yet\*\*/.test(readme), "the trusted publisher is not claimed to be configured");
   assert.ok(readme.includes("NPM_CONFIG_USERCONFIG"), "the setup-node npmrc placeholder is documented");
   assert.ok(readme.includes("placeholder"), "the placeholder is described as a placeholder, not a token");
   assert.ok(!/no `NODE_AUTH_TOKEN`, no\s+`NPM_TOKEN`, no\s+`\.npmrc` written/.test(readme), "the old npmrc claim is gone");
@@ -1557,10 +1582,20 @@ test("the README documents the deferred bootstrap and never suggests the taken u
     /atomically bind the verifier/.test(readme) && /outside this control/.test(readme),
     "the residual boundary of the pre-stage revalidation is documented",
   );
+  // The release-gate example and the documented staging command track the
+  // real current release.
+  assert.ok(
+    readme.includes(`RELEASE_TAG=${RELEASE_TAG} npm run gate:release`),
+    "the release-gate example pins the current release tag",
+  );
+  assert.ok(
+    readme.includes(`npm stage publish "./release-assets/<tarball>" --access public --tag latest --ignore-scripts`),
+    "the workflow stages the exact release tarball file",
+  );
   assert.ok(!/npm\s+(?:i|install|add)\s+(?:-g|--global\s+)?skill-router\b/.test(readme), "the taken unscoped name is never installable");
   assert.match(
     readme,
-    /not on npm yet[\s\S]{0,400}npm install --global @openagency\.io\/skill-router/,
-    "the install command carries the unpublished caveat",
+    /npm install --global @openagency\.io\/skill-router/,
+    "the exact install command is documented without a caveat",
   );
 });

@@ -14,9 +14,10 @@ or share runtime state with that project.
 - **Contributing**: [CONTRIBUTING.md](CONTRIBUTING.md)
 - **Security policy**: [SECURITY.md](SECURITY.md)
 - **Code of Conduct**: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
-- **Package**: `@openagency.io/skill-router` — **not published to npm yet**, see
-  "npm publication (Phase 12)" in the Development section. The unscoped name
-  `skill-router` belongs to an unrelated publisher and must never be used.
+- **Package**: `@openagency.io/skill-router` — **published to npm** (see
+  "npm publication (Phase 12)" in the Development section for provenance).
+  The unscoped name `skill-router` belongs to an unrelated publisher and must
+  never be used.
 
 ## Support, contributing, and security
 
@@ -41,9 +42,7 @@ or share runtime state with that project.
 
 ## Install
 
-Node.js 20 or newer is required. From a published package (**the package is
-not on npm yet** — the command below works only after the deferred bootstrap
-described in "npm publication (Phase 12)"):
+Node.js 20 or newer is required. From the published package:
 
 ```sh
 npm install --global @openagency.io/skill-router
@@ -797,7 +796,7 @@ internal verification affordance, not required for normal use.
 
 ```sh
 npm run gate:clean                      # local clean-candidate gate (~2 min)
-RELEASE_TAG=v0.1.0 npm run gate:release # validated release artifacts in dist/
+RELEASE_TAG=v0.1.1 npm run gate:release # validated release artifacts in dist/
 ```
 
 `npm run gate:clean` (`scripts/clean-candidate.mjs`) proves the *current*
@@ -913,21 +912,24 @@ and digests, refuses an
 existing release for the tag, creates the release once, and then verifies the
 release carries exactly those two remote assets, checking server-reported
 digests whenever GitHub publishes them. External actions are pinned to
-immutable commit SHAs. **Nothing is published to npm** — npm publication is
-Phase 12.
+immutable commit SHAs. **Nothing is published to npm from this workflow** —
+npm staging is `publish-npm.yml` (Phase 12).
 
 ### npm publication (Phase 12)
 
-**Nothing has been published, and nothing may be published from this
-repository right now.** The package name is `@openagency.io/skill-router`
-under the MIT license; the `openagency.io` npm organization ownership was
-verified (the npm account `openagency-io` is an organization owner), so the
-scope-rights question that previously blocked this release is settled — but
-the package itself is **still unpublished** and stays unpublished until the
-deferred bootstrap below actually runs. The unscoped name `skill-router` is
+The package **is published**: `@openagency.io/skill-router` (MIT) is on the
+public npm registry, and `openagency.io` npm organization ownership was
+verified (the npm account `openagency-io` is an organization owner), so no
+scope-rights question remains open. The unscoped name `skill-router` is
 already owned by an unrelated publisher — it is never used or suggested here.
-Every npm credential, bootstrap, and release action is deferred to a future,
-explicitly authorized operator step.
+
+Publication provenance, stated precisely: version `0.1.0` reached the
+registry through a one-time, manually authenticated bootstrap — staged with
+a granular npm token and approved by a maintainer with 2FA — so **it carries
+no trusted-publisher/OIDC provenance**. That is a permanent historical fact
+about the first version, not a gap anyone can retrofit. Every later version
+is staged through the workflow below, whose only npm credential is OIDC
+trusted publishing, with no npm token of any kind.
 
 The three project links below are also in `package.json` as `repository`,
 `homepage`, and `bugs`, so they travel inside every packed tarball:
@@ -939,27 +941,24 @@ The three project links below are also in `package.json` as `repository`,
   tag `latest` — fixed, so a publish cannot silently change registry, access,
   or dist-tag
 
-#### 1. Manual bootstrap — future operator only, do not run now
+#### 1. The one-time manual bootstrap of `0.1.0` (historical record)
 
-> **Warning.** No command in this subsection may be run today. They document
-> the one-time bootstrap an authorized human performs later, in person.
-> npm staged publishing *can* create a package that does not exist yet, but
-> this repository's OIDC design cannot bootstrap one: npm only accepts a
-> trusted publisher for a package that is already on the registry, so the
-> human bootstrap has to come first — and it is the only step that puts
-> anything on the registry at all. The bootstrapped first version therefore
-> **cannot carry trusted-publisher/OIDC provenance**: it is approved by a
-> person with 2FA. Later public versions staged through the workflow below do
-> get npm's automatic provenance, provided the repository and the package are
-> public.
+> **Historical.** These are the steps that first put `@openagency.io/skill-router`
+> on the registry. They are kept as the record of how the bootstrapped first
+> version came to lack OIDC provenance, and as the template any *new* manual
+> staging must still follow: exact release assets only, the checksum compared
+> by eye, scripts disabled, human 2FA approval. npm accepts a trusted
+> publisher only for a package that already exists on the registry, so this
+> authenticated human bootstrap had to come first — and the bootstrapped
+> `0.1.0` **cannot carry trusted-publisher/OIDC provenance**: it was staged
+> with a token and approved by a person with 2FA. Later public versions
+> staged through the workflow below do get npm's automatic provenance,
+> provided the repository and the package are public.
 
-0. **Scope ownership is verified; the package is still unpublished.** The
-   `openagency.io` npm organization is owned by the npm account
-   `openagency-io`, verified as an organization owner before this release, so
-   no `@openagency` rights blocker remains. What has *not* happened is the
-   bootstrap itself: `@openagency.io/skill-router` does not exist on the
-   registry yet, and nothing below may be run until an authorized operator
-   takes that step. The unscoped name stays unusable either way:
+0. **Scope ownership was verified before the bootstrap.** The `openagency.io`
+   npm organization is owned by the npm account `openagency-io`, verified as
+   an organization owner before the release, so no `@openagency` rights
+   blocker stood in the way. The unscoped name stays unusable either way:
    `skill-router` is owned by an unrelated publisher.
 1. Work in a **fresh, empty directory** of its own — never in a checkout or a
    directory that already holds assets — and fetch the *existing* release,
@@ -1001,9 +1000,9 @@ The three project links below are also in `package.json` as `repository`,
    for byte exactly as the release gate validated it, so no install, prepare,
    prepack, or prepublish script can run on the way in. Staging a
    *directory* would repack the package and destroy that guarantee. Because
-   the package does not exist yet, this first staged bootstrap publicly
-   creates a `0.0.0-stage` placeholder before any approval; the staged
-   `0.1.0` stays non-public until a maintainer reviews it and approves it
+   the package did not exist yet, this first staged bootstrap publicly
+   created a `0.0.0-stage` placeholder before any approval, and the staged
+   `0.1.0` stayed non-public until a maintainer reviewed it and approved it
    with 2FA (`npm stage approve <stage-id>` or the npm website). This
    repository never approves, and never can approve, its own staged release.
 
@@ -1014,14 +1013,9 @@ There is deliberately no `prepublishOnly`, `prepare`, `prepack`, or any other
 lifecycle script in `package.json`: publication runs no repository code at
 all, and the workflow below refuses to stage a tarball that carries one.
 
-#### 2. Configure the npm trusted publisher (after the bootstrap)
+#### 2. The npm trusted publisher (configured — proven only per successful run)
 
-npm staged publishing can create a brand-new package, but **this OIDC design
-cannot bootstrap one**: the trusted publisher is what lets the workflow mint an
-npm identity, and npm only accepts one for a package that already exists on the
-registry. So this step comes strictly after the bootstrap above, and it has
-**not been configured yet** — the package does not exist on the registry until
-the bootstrap runs. Configure npm's trusted publisher within npm's own
+The trusted publisher for this package **is configured** within npm's own
 supported configuration flow:
 
 - repository: `Open-Agency-io/skill-router` (exact casing — the GitHub OIDC
@@ -1030,9 +1024,13 @@ supported configuration flow:
 - permission: **stage-only**, so the identity can stage a version but never
   publish one.
 
-Then complete the first successful OIDC stage through that trusted publisher
-**within two days** of configuring it — npm expires the configuration if no
-successful publish lands in that window — and only after that stage succeeds,
+Configuration alone proves nothing about any release. npm's trusted-publisher
+actor and automatic provenance appear on a staged version **only after a
+successful run of this workflow** — the staged npm record produced by that
+run is the evidence, and nothing in this repository can establish the claim
+earlier or on its own. Two standing rules follow from npm's policy: npm
+expires a newly configured trusted publisher unless a successful stage lands
+within two days of its configuration, and once a successful stage exists,
 restrict any traditional npm tokens for this package to whatever is still
 strictly needed.
 

@@ -9,7 +9,7 @@ latest released `0.1.x` line only:
 | --- | --- |
 | latest `0.1.x` | Yes |
 | any older version | No |
-| the npm registry | The package is **not published yet** (see below) |
+| the npm registry | Yes — only `@openagency.io/skill-router`; see "Package provenance" below |
 
 There is no long-term support, no backporting, and no extended-support
 commitment for older versions.
@@ -33,23 +33,26 @@ any third-party package squatting a similar name.
 - The package name is `@openagency.io/skill-router`. The `openagency.io` npm
   organization was selected deliberately and ownership was **verified** (the
   npm account `openagency-io` is an organization owner); there is no
-  scope-rights question left open. The package itself is **not published to
-  npm** and stays unpublished until the first bootstrap described in the
-  README actually runs.
-- The first bootstrap is an authenticated `npm stage publish` of the exact
-  release tarball with `--ignore-scripts`; because the package does not exist
-  yet, npm creates a public `0.0.0-stage` placeholder before a maintainer
-  reviews and approves the staged `0.1.0` with 2FA. That first version
-  therefore carries no trusted-publisher/OIDC provenance.
+  scope-rights question left open. The package **is published** on the public
+  npm registry; `0.1.x` is the current line.
+- The first version, `0.1.0`, reached the registry through a one-time manual
+  bootstrap: an authenticated `npm stage publish` of the exact release
+  tarball with `--ignore-scripts`, which publicly created a `0.0.0-stage`
+  placeholder before a maintainer reviewed and approved the staged `0.1.0`
+  with 2FA. Because that bootstrap was a human step, `0.1.0` carries **no
+  trusted-publisher/OIDC provenance** — a permanent historical fact.
 - The trusted publisher for repository `Open-Agency-io/skill-router`,
-  workflow `publish-npm.yml`, stage-only permission, is **not configured
-  yet** — npm only accepts one for a package that already exists. Once it is
-  configured, the first successful OIDC stage must land within two days,
-  after which traditional npm tokens are restricted.
+  workflow `publish-npm.yml`, **is configured** with stage-only permission.
+  Configuration alone proves nothing: npm's trusted-publisher actor and
+  provenance appear on a staged version only after a successful run of that
+  workflow, and the staged npm record from that run is the evidence. npm
+  expires a newly configured trusted publisher unless a successful stage
+  lands within two days of configuration.
 - The unscoped name `skill-router` belongs to an **unrelated third-party
   publisher** and must never be installed or suggested as this project.
-- Until this repository's own release notes say otherwise, treat any
-  registry package claiming to be Skill Router as unofficial.
+- Install only `@openagency.io/skill-router` from the official registry
+  record; any other registry package claiming to be Skill Router is
+  unofficial.
 
 ## Supply-chain posture
 
@@ -65,9 +68,10 @@ The release design deliberately removes the usual supply-chain footguns:
   the gate-validated tarball and `SHA256SUMS`. Verify downloads against
   `SHA256SUMS` (compare the tarball's own sha256 to the file's text; do not
   let any checker follow paths from the checksum file).
-- **`--ignore-scripts` publication.** The documented manual bootstrap
-  publishes the exact release tarball with `--ignore-scripts` so the bytes
-  the gate validated are the bytes that land on the registry.
+- **`--ignore-scripts` publication.** Both the manual bootstrap of `0.1.0`
+  and every `publish-npm.yml` staging run publish the exact release tarball
+  with `--ignore-scripts` so the bytes the gate validated are the bytes that
+  land on the registry.
 - **Least-privilege CI.** Jobs that execute candidate code hold only
   `contents: read` and check out with `persist-credentials: false`.
 
