@@ -952,7 +952,7 @@ test("scan and add regenerate every recorded integration", async () => {
     runner.log.length = 0;
     const scan = await scanOperation({ root, claudeExec: runner });
     assert.deepEqual(scan.harnesses, ["opencode", "claude"]);
-    assert.equal(scan.claude.version, "0.1.2", "changed plugin content must advance the plugin version (package 0.1.1 -> 0.1.2)");
+    assert.equal(scan.claude.version, "0.1.3", "changed plugin content must advance the plugin version (package 0.1.2 -> 0.1.3)");
     assert.ok(
       runner.log.includes(
         `plugin update openagency-skill-router@${scan.claude.marketplace} --scope local`,
@@ -1643,6 +1643,68 @@ test("fresh init with a mixed valid and malformed source set aborts before any w
     assert.equal(await exists(path.join(root, ".skill-router")), false, "still no router state");
     assert.equal(await exists(path.join(root, ".claude")), false, "still no Claude surface");
     assert.deepEqual(runner.log, [], "still no Claude CLI call");
+  });
+});
+
+test("a source description with colon-space completes a Claude init without weakening atomicity", async () => {
+  // The exact reported shape: discovery's compact parser reads the plain
+  // string, while strict YAML used to reject it as a compact nested mapping
+  // and abort generation on another device.
+  await withHarnessEnvironment(async (environment) => {
+    const root = environment.root;
+    const source = releaseSource(environment);
+    await writeSkill(source, "Release", "Use when: testing");
+    const runner = createFakeClaudeRunner();
+
+    const init = await initOperation({ root, harness: "claude", claudeExec: runner });
+    assert.deepEqual(init.harnesses, ["claude"], "the Claude harness alone completes");
+
+    const generated = await readFile(
+      path.join(
+        root,
+        ".skill-router",
+        "claude",
+        "plugins",
+        "openagency-skill-router",
+        "skills",
+        "release",
+        "SKILL.md",
+      ),
+      "utf8",
+    );
+    const data = parse(splitSkillDocument(generated).yaml, { merge: true });
+    assert.equal(data.name, "release", "the generated skill carries the canonical name");
+    assert.equal(data.description, "Use when: testing", "the colon-space description survives as a valid scalar");
+    assert.equal(
+      splitSkillDocument(generated).body,
+      splitSkillDocument(await readFile(source, "utf8")).body,
+      "the body is copied verbatim",
+    );
+    assert.equal((await checkOperation({ root, claudeExec: runner })).healthy, true, "the generated plugin is healthy");
+  });
+
+  // Atomicity is unchanged: an unrelated strict-YAML failure in the same run
+  // still aborts before any write, and the compatibility retry never masks it.
+  await withHarnessEnvironment(async (environment) => {
+    const root = environment.root;
+    const mixed = path.join(environment.directory, "mixed");
+    await mkdir(mixed, { recursive: true });
+    await writeSkill(path.join(mixed, "release.md"), "Release", "Use when: testing");
+    await writeFile(path.join(mixed, "broken.md"), "---\nbroken: [1,\n---\nBody.\n");
+    const configFile = path.join(root, ".skill-router.json");
+    const config = `${JSON.stringify({ schemaVersion: 1, sources: [mixed] }, null, 2)}\n`;
+    await writeFile(configFile, config);
+    const runner = createFakeClaudeRunner();
+
+    await assert.rejects(
+      () => initOperation({ root, harness: "claude", claudeExec: runner }),
+      /Invalid skill frontmatter/,
+      "the unrelated malformed candidate still blocks init",
+    );
+    assert.equal(await readFile(configFile, "utf8"), config, "the config is never rewritten");
+    assert.equal(await exists(path.join(root, ".skill-router")), false, "no router state");
+    assert.equal(await exists(path.join(root, ".claude")), false, "no Claude registration surface");
+    assert.deepEqual(runner.log, [], "the Claude CLI is never invoked");
   });
 });
 

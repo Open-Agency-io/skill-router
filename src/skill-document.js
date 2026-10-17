@@ -1,6 +1,9 @@
 import { lstat } from "node:fs/promises";
 import { isAlias, isMap, parseDocument, stringify } from "yaml";
 import { boundedWalk, createWalkBudget, readBoundedFile } from "./bounded-walk.js";
+// Discovery's compact parser has no imports of its own, so this edge carries
+// no cycle; it is the parser that decides whether a source is a skill at all.
+import { parseFrontmatter } from "./frontmatter.js";
 
 const SKIPPED_SUPPORT_ENTRIES = new Set([".git", "node_modules"]);
 
@@ -98,12 +101,121 @@ function effectiveMapping(doc) {
   return data;
 }
 
-/** Parse one source frontmatter block with merge-key resolution enabled,
- * failing closed on malformed input. */
-function parseSkillYaml(yaml) {
+/** Strict parse of one source frontmatter block with merge-key resolution
+ * enabled, returning either the document or a bounded frontmatter error. */
+function strictSkillDocument(yaml) {
   const doc = parseDocument(yaml, { prettyErrors: true, merge: true });
-  if (doc.errors.length) throw frontmatterError(doc.errors[0].message.split("\n")[0]);
-  return doc;
+  if (doc.errors.length) {
+    return { error: frontmatterError(doc.errors[0].message.split("\n")[0]) };
+  }
+  return { doc };
+}
+
+/**
+ * The only frontmatter keys a generated harness copy is allowed to replace,
+ * so the compatibility rewrite below can never touch anything else.
+ */
+const REPLACEABLE_IDENTITY_KEYS = new Set(["name", "description"]);
+/**
+ * Characters a YAML plain scalar may never open with: every context
+ * indicator that is not `-`/`?`/`:` (`,` flow separator, `[`/`]`/`{`/`}`
+ * flow collections, `#` comment) plus the reserved openings (`&` anchor,
+ * `*` alias, `!` tag, `|`/`>` block scalar, quotes, `%` directive, `@` and
+ * backtick). `-`, `?`, and `:` are legal plain openings only when followed by
+ * a non-space, non-end character, which `isPlainIdentityValue` checks.
+ */
+const NON_PLAIN_OPENINGS = new Set([",", "[", "]", "{", "}", "#", "&", "*", "!", "|", ">", '"', "'", "%", "@", "`"]);
+
+/**
+ * Whether an identity value is the syntactically plain, unquoted, single-line
+ * scalar the compatibility rewrite may quote. Anything opening with an
+ * indicator or reserved character is a different YAML construct — a block
+ * sequence entry, explicit key, mapping-value indicator, comment, anchor,
+ * alias, tag, block scalar header, flow collection, directive, or quoted
+ * scalar — and must stay byte-identical so strict YAML stays authoritative.
+ * A carriage return means the value is not single-line even after the
+ * document's CRLF normalization.
+ */
+function isPlainIdentityValue(value) {
+  if (value.length === 0 || value.includes("\r")) return false;
+  const opening = value[0];
+  if (NON_PLAIN_OPENINGS.has(opening)) return false;
+  if (opening === "-" || opening === "?" || opening === ":") {
+    const next = value[1];
+    if (next === undefined || next === " " || next === "\t") return false;
+  }
+  return true;
+}
+
+/**
+ * Whether discovery's compact parser — the parser that decides whether this
+ * frontmatter is a loadable skill at all — accepts the original frontmatter.
+ * It structurally refuses tabs, duplicate keys, multi-line flow roots, and
+ * non key/value lines, so gating the retry on it keeps compatibility exactly
+ * aligned with discovery and leaves every construct discovery would refuse
+ * untouched. A reconstruction of the split document is what is parsed, and
+ * any parser refusal is a plain `false` rather than a surfaced message.
+ */
+function discoveryAcceptsFrontmatter(yaml) {
+  try {
+    parseFrontmatter(`---\n${yaml}${yaml.endsWith("\n") ? "" : "\n"}---\n`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Canonicalize the replaceable top-level identity scalars (`name` and
+ * `description` only) whose unquoted, single-line, *plain* value carries a
+ * colon-space — the one shape the compact discovery parser accepts as a plain
+ * string but YAML 1.2 rejects as a compact nested mapping (for example
+ * `description: Use when: testing`). Only such values are re-emitted as
+ * double-quoted scalars, with any trailing (or comment-only) comment kept
+ * verbatim; every other byte of the document — key order, indentation, nested
+ * fields, anchors, merges, unknown keys, and the body — is left untouched.
+ * Returns `null` when no line qualifies, so callers can tell "nothing to
+ * retry" from "rewritten".
+ */
+function canonicalizeIdentityScalars(yaml) {
+  let changed = false;
+  const lines = yaml.split("\n").map((line) => {
+    const match = /^(name|description):[ \t]+(.*)$/.exec(line);
+    if (!match || !REPLACEABLE_IDENTITY_KEYS.has(match[1])) return line;
+    const rawValue = match[2];
+    if (!isPlainIdentityValue(rawValue)) return line;
+    // A `#` preceded by whitespace starts a comment in a plain scalar, so it
+    // is split off and re-appended rather than absorbed into the quoted value;
+    // a line that opens with `#` is comment-only and never qualifies above.
+    const comment = /[ \t]+#/.exec(rawValue);
+    const value = comment ? rawValue.slice(0, comment.index) : rawValue;
+    if (!/:[ \t]/.test(value)) return line;
+    changed = true;
+    const suffix = comment ? ` ${rawValue.slice(comment.index).trimStart()}` : "";
+    return `${match[1]}: ${JSON.stringify(value)}${suffix}`;
+  });
+  return changed ? lines.join("\n") : null;
+}
+
+/**
+ * Parse one source frontmatter block strictly first, failing closed with the
+ * original bounded diagnostic. Only when strict parsing fails *and* discovery
+ * would accept the document *and* a replaceable top-level identity scalar
+ * carries a colon-space is the document retried once with just those scalars
+ * quoted; the retry is accepted only if it parses cleanly, and every other
+ * failure — nested or unknown keys, duplicates, tabs, flow roots, indicators,
+ * aliases — keeps the strict result. The error text is never inspected, so
+ * diagnostics stay exactly as strict YAML reports them.
+ */
+function parseSkillYaml(yaml) {
+  const strict = strictSkillDocument(yaml);
+  if (strict.doc) return strict.doc;
+  const canonical = canonicalizeIdentityScalars(yaml);
+  if (canonical === null) throw strict.error;
+  if (!discoveryAcceptsFrontmatter(yaml)) throw strict.error;
+  const retried = strictSkillDocument(canonical);
+  if (retried.error) throw strict.error;
+  return retried.doc;
 }
 
 /**
@@ -155,8 +267,11 @@ function applyMetadataPatch(doc, name, effective, patch) {
  * registry `description` are overridden, and an optional harness-specific
  * `metadata` patch is applied to the effective metadata. Documents without
  * frontmatter synthesize the canonical identity (plus the patch, when given)
- * and keep the original content as the body. Malformed, duplicate, excessive,
- * cyclic, or pathologically deep YAML fails closed.
+ * and keep the original content as the body. Parsing is strict first, with one
+ * narrow compatibility retry that quotes an unquoted top-level `name` or
+ * `description` carrying a colon-space (the shape discovery already accepts);
+ * malformed, duplicate, excessive, cyclic, or pathologically deep YAML fails
+ * closed.
  */
 export function transformSkillDocument({ text, name, description, metadata = null }) {
   const source = String(text);

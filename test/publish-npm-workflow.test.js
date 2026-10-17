@@ -59,9 +59,9 @@ const ALLOWED_EXPRESSION =
 const NPM_VERSION = "11.20.0";
 const PACKAGE_NAME = "@openagency.io/skill-router";
 const ORGANISATION_REPO = "Open-Agency-io/skill-router";
-const RELEASE_TAG = "v0.1.1";
-const PACKAGE_VERSION = "0.1.1";
-const TARBALL_NAME = "openagency.io-skill-router-0.1.1.tgz";
+const RELEASE_TAG = "v0.1.2";
+const PACKAGE_VERSION = "0.1.2";
+const TARBALL_NAME = "openagency.io-skill-router-0.1.2.tgz";
 /** The historical first release: the one-time manual bootstrap on npm. */
 const BOOTSTRAP_TAG = "v0.1.0";
 const BOOTSTRAP_TARBALL_NAME = "openagency.io-skill-router-0.1.0.tgz";

@@ -796,7 +796,7 @@ internal verification affordance, not required for normal use.
 
 ```sh
 npm run gate:clean                      # local clean-candidate gate (~2 min)
-RELEASE_TAG=v0.1.1 npm run gate:release # validated release artifacts in dist/
+RELEASE_TAG=v0.1.2 npm run gate:release # validated release artifacts in dist/
 ```
 
 `npm run gate:clean` (`scripts/clean-candidate.mjs`) proves the *current*
